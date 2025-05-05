@@ -1,3 +1,6 @@
+mod data;
+pub mod index;
+
 #[cfg(test)]
 mod tests {
     #[test]
