@@ -1,8 +1,10 @@
+#![allow(dead_code)]
+
 pub mod btree;
 use crate::data::log_record::LogRecordPos;
 
 /// Abstract indexer, for different index types
-pub trait Indexer {
+pub trait Indexer: Send + Sync {
     fn put(&self, key: Vec<u8>, pos: LogRecordPos) -> bool;
     fn get(&self, key: Vec<u8>) -> Option<LogRecordPos>;
     fn delete(&self, key: Vec<u8>) -> bool;

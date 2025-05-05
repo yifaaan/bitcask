@@ -1,5 +1,7 @@
 mod data;
-pub mod index;
+mod errors;
+mod fio;
+mod index;
 
 #[cfg(test)]
 mod tests {
