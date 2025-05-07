@@ -7,6 +7,7 @@ pub struct LogRecordPos {
     pub(crate) offset: u64,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LogRecordType {
     Normal = 1,
     Deleted = 2,

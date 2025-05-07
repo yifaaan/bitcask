@@ -7,6 +7,8 @@ use crate::errors::Result;
 use crate::fio::IOManager;
 use parking_lot::RwLock;
 
+use super::log_record::LogRecord;
+
 /// 数据文件
 pub struct DataFile {
     /// 文件id
@@ -34,6 +36,10 @@ impl DataFile {
     }
 
     pub fn write(&self, buf: &[u8]) -> Result<usize> {
+        todo!()
+    }
+
+    pub fn read_log_record(&self, offset: u64) -> Result<LogRecord> {
         todo!()
     }
 }

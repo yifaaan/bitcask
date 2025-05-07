@@ -44,6 +44,33 @@ impl Engine {
         }
         Ok(())
     }
+
+    pub fn get(&self, key: Bytes) -> Result<Bytes> {
+        if key.is_empty() {
+            return Err(Errors::KeyIsEmpty);
+        }
+        // 从内存索引获取位置
+        let Some(position) = self.index.get(key.to_vec()) else {
+            return Err(Errors::KeyNotFound);
+        };
+        let active_file = self.active_file.read();
+        let older_files = self.older_files.read();
+        let log_record = match active_file.get_file_id() == position.file_id {
+            true => active_file.read_log_record(position.offset)?,
+            false => {
+                let Some(data_file) = older_files.get(&position.file_id) else {
+                    return Err(Errors::DataFileNotFound);
+                };
+                data_file.read_log_record(position.offset)?
+            }
+        };
+        // 判断记录的类型
+        if log_record.rec_type == LogRecordType::Deleted {
+            return Err(Errors::KeyNotFound);
+        }
+        Ok(log_record.value.into())
+    }
+
     /// 将记录追加写到活跃数据文件，返回写入到文件的起始位置
     fn append_log_record(&self, record: &mut LogRecord) -> Result<LogRecordPos> {
         let dir_path = self.options.dir_path.as_path();
