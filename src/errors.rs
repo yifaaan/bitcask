@@ -17,4 +17,10 @@ pub enum Errors {
 
     #[error("Failed to open file")]
     OpenFileError,
+
+    #[error("Key is empty")]
+    KeyIsEmpty,
+
+    #[error("Failed to update index")]
+    FailedToUpdateIndex,
 }
