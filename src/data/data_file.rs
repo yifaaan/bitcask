@@ -45,7 +45,7 @@ impl DataFile {
     }
 
     pub fn sync(&self) -> Result<()> {
-        todo!()
+        self.io_manager.sync()
     }
 
     pub fn get_file_id(&self) -> u32 {
@@ -53,7 +53,10 @@ impl DataFile {
     }
 
     pub fn write(&self, buf: &[u8]) -> Result<usize> {
-        todo!()
+        let n_bytes = self.io_manager.write(buf)?;
+        // 更新写偏移
+        *self.write_offset.write() += n_bytes as u64;
+        Ok(n_bytes)
     }
 
     /// 从给定偏移处读取一条记录
