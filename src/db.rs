@@ -114,6 +114,28 @@ impl Engine {
         Ok(log_record.value.into())
     }
 
+    pub fn delete(&self, key: Bytes) -> Result<()> {
+        if key.is_empty() {
+            return Err(Errors::KeyIsEmpty);
+        }
+        // 从内存索引查找对应数据，不存在时直接返回
+        let Some(_) = self.index.get(key.to_vec()) else {
+            return Err(Errors::KeyNotFound);
+        };
+        // 构造一条删除记录
+        let mut record = LogRecord {
+            key: key.to_vec(),
+            value: vec![],
+            rec_type: LogRecordType::Deleted,
+        };
+        self.append_log_record(&mut record)?;
+        // 从内存索引中删除
+        if !self.index.delete(key.to_vec()) {
+            return Err(Errors::FailedToUpdateIndex);
+        }
+        Ok(())
+    }
+
     /// 将记录追加写到活跃数据文件，返回写入到文件的起始位置
     fn append_log_record(&self, record: &mut LogRecord) -> Result<LogRecordPos> {
         let dir_path = self.options.dir_path.as_path();
@@ -184,10 +206,13 @@ impl Engine {
                     file_id: *file_id,
                     offset,
                 };
-                match record.rec_type {
+                // 根据记录类型，更新索引
+                if !match record.rec_type {
                     LogRecordType::Normal => self.index.put(record.key, record_pos),
                     LogRecordType::Deleted => self.index.delete(record.key),
-                };
+                } {
+                    return Err(Errors::FailedToUpdateIndex);
+                }
                 // 更新偏移量
                 offset += record_size;
             }
