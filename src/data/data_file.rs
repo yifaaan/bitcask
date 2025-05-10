@@ -7,7 +7,9 @@ use crate::errors::Result;
 use crate::fio::IOManager;
 use parking_lot::RwLock;
 
-use super::log_record::LogRecord;
+use super::log_record::ReadLogRecord;
+
+pub const DATA_FILE_NAME_SUFFIX: &str = ".data";
 
 /// 数据文件
 pub struct DataFile {
@@ -23,6 +25,11 @@ impl DataFile {
     pub fn new(dir_path: &Path, file_id: u32) -> Result<Self> {
         todo!()
     }
+
+    pub fn set_write_offset(&self, offset: u64) {
+        *self.write_offset.write() = offset;
+    }
+
     pub fn get_write_offset(&self) -> u64 {
         *self.write_offset.read()
     }
@@ -39,7 +46,7 @@ impl DataFile {
         todo!()
     }
 
-    pub fn read_log_record(&self, offset: u64) -> Result<LogRecord> {
+    pub fn read_log_record(&self, offset: u64) -> Result<ReadLogRecord> {
         todo!()
     }
 }

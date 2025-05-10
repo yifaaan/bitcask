@@ -1,19 +1,22 @@
 #![allow(dead_code)]
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use bytes::Bytes;
+use log::warn;
 use parking_lot::RwLock;
 
 use crate::{
     data::{
-        data_file::DataFile,
+        data_file::{DATA_FILE_NAME_SUFFIX, DataFile},
         log_record::{LogRecord, LogRecordPos, LogRecordType},
     },
     errors::{Errors, Result},
-    index::Indexer,
+    index::{Indexer, new_indexer},
     options::Options,
 };
+
+const INITIAL_DATA_FILE_ID: u32 = 0;
 
 pub struct Engine {
     /// 配置
@@ -24,9 +27,49 @@ pub struct Engine {
     older_files: Arc<RwLock<HashMap<u32, DataFile>>>,
     /// 内存索引
     index: Box<dyn Indexer>,
+    /// 文件id,只用于启动时加载索引使用
+    file_ids: Vec<u32>,
 }
 
 impl Engine {
+    pub fn open(opts: Options) -> Result<Self> {
+        check_options(&opts)?;
+        // 判断目录是否存在
+        let dir_path = &opts.dir_path;
+        if !dir_path.is_dir() {
+            std::fs::create_dir_all(dir_path).map_err(|e| {
+                warn!("Failed to create database dir: {}", e);
+                Errors::FailedToCreateDatabaseDir
+            })?;
+        }
+        let mut data_files = load_data_files(dir_path)?;
+        let file_ids: Vec<_> = data_files.iter().map(|f| f.get_file_id()).collect();
+        // 将旧数据文件保存到older_files
+        let mut older_files = HashMap::new();
+        if data_files.len() > 1 {
+            for _ in 0..data_files.len() - 2 {
+                let file = data_files.pop().unwrap();
+                older_files.insert(file.get_file_id(), file);
+            }
+        }
+        // 最后一个是活跃数据文件
+        let active_file = match data_files.pop() {
+            Some(file) => file,
+            None => DataFile::new(dir_path, INITIAL_DATA_FILE_ID)?,
+        };
+        let idx_type = opts.index_type;
+        let mut engine = Self {
+            options: Arc::new(opts),
+            active_file: Arc::new(RwLock::new(active_file)),
+            older_files: Arc::new(RwLock::new(older_files)),
+            index: new_indexer(idx_type),
+            file_ids,
+        };
+        // 读取数据文件来加载内存索引
+        engine.load_index_from_data_files()?;
+        Ok(engine)
+    }
+
     pub fn put(&self, key: Bytes, value: Bytes) -> Result<()> {
         if key.is_empty() {
             return Err(Errors::KeyIsEmpty);
@@ -56,12 +99,12 @@ impl Engine {
         let active_file = self.active_file.read();
         let older_files = self.older_files.read();
         let log_record = match active_file.get_file_id() == position.file_id {
-            true => active_file.read_log_record(position.offset)?,
+            true => active_file.read_log_record(position.offset)?.record,
             false => {
                 let Some(data_file) = older_files.get(&position.file_id) else {
                     return Err(Errors::DataFileNotFound);
                 };
-                data_file.read_log_record(position.offset)?
+                data_file.read_log_record(position.offset)?.record
             }
         };
         // 判断记录的类型
@@ -104,4 +147,94 @@ impl Engine {
             offset: write_offset,
         })
     }
+
+    /// 从数据文件加载索引
+    /// 1. 遍历数据文件，读取每条记录
+    /// 2. 将记录写入索引
+    /// 3. 如果是删除记录，则从索引中删除
+    /// 4. 如果是正常记录，则将记录写入索引
+    fn load_index_from_data_files(&mut self) -> Result<()> {
+        if self.file_ids.is_empty() {
+            return Ok(());
+        }
+        let active_file = self.active_file.read();
+        let older_files = self.older_files.read();
+        for (i, file_id) in self.file_ids.iter().enumerate() {
+            let mut offset = 0;
+            loop {
+                let read_record_res = match *file_id == active_file.get_file_id() {
+                    true => active_file.read_log_record(offset),
+                    false => {
+                        let data_file = older_files.get(file_id).unwrap();
+                        data_file.read_log_record(offset)
+                    }
+                };
+                let (record, record_size) = match read_record_res {
+                    Ok(v) => (v.record, v.size),
+                    Err(e) => {
+                        if e == Errors::ReadDataFileEof {
+                            // 读取到文件末尾，退出循环,读取下一个文件
+                            break;
+                        }
+                        return Err(e);
+                    }
+                };
+                // 记录的位置信息
+                let record_pos = LogRecordPos {
+                    file_id: *file_id,
+                    offset,
+                };
+                match record.rec_type {
+                    LogRecordType::Normal => self.index.put(record.key, record_pos),
+                    LogRecordType::Deleted => self.index.delete(record.key),
+                };
+                // 更新偏移量
+                offset += record_size;
+            }
+            // 如果是最后一个文件，更新活跃数据文件的偏移量
+            if i == self.file_ids.len() - 1 {
+                active_file.set_write_offset(offset);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn check_options(opts: &Options) -> Result<()> {
+    let dir_path = opts.dir_path.to_str();
+    if dir_path.is_none() || dir_path.unwrap().is_empty() {
+        return Err(Errors::DirPathIsEmpty);
+    }
+    if opts.data_file_size == 0 {
+        return Err(Errors::DataFileSizeIsTooSmall);
+    }
+    Ok(())
+}
+
+fn load_data_files(dir_path: &Path) -> Result<Vec<DataFile>> {
+    let d_entries = std::fs::read_dir(dir_path).map_err(|_| Errors::FailedToReadDatabaseDir)?;
+    let mut file_ids = Vec::new();
+    let mut data_files = Vec::new();
+
+    for entry in d_entries {
+        let entry = entry.map_err(|_| Errors::FailedToGetDirEntry)?;
+        let file_name = entry.file_name();
+        let file_name = file_name.to_str().unwrap();
+        // 判断文件名是否以.data结尾
+        if file_name.ends_with(DATA_FILE_NAME_SUFFIX) {
+            // 0000.data
+            let split_names: Vec<&str> = file_name.split(".").collect();
+            let file_id = split_names[0].parse::<u32>()?;
+            file_ids.push(file_id);
+        }
+    }
+
+    file_ids.sort();
+
+    // 打开数据文件
+    for file_id in &file_ids {
+        let data_file = DataFile::new(dir_path, *file_id)?;
+        data_files.push(data_file);
+    }
+    Ok(data_files)
 }

@@ -4,7 +4,7 @@ use thiserror::Error;
 pub type Result<T> = std::result::Result<T, Errors>;
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Error, Debug)]
+#[derive(Error, Debug, Eq, PartialEq)]
 pub enum Errors {
     #[error("Failed to read from data file")]
     ReadFromDataFileError,
@@ -29,4 +29,25 @@ pub enum Errors {
 
     #[error("Data file not found")]
     DataFileNotFound,
+
+    #[error("Dir path is empty")]
+    DirPathIsEmpty,
+
+    #[error("Data file size is too small")]
+    DataFileSizeIsTooSmall,
+
+    #[error("Failed to create database dir")]
+    FailedToCreateDatabaseDir,
+
+    #[error("Failed to read database dir")]
+    FailedToReadDatabaseDir,
+
+    #[error("Failed to get dir entry")]
+    FailedToGetDirEntry,
+
+    #[error("Failed to parse file id")]
+    FailedToParseFileId(#[from] std::num::ParseIntError),
+
+    #[error("Read data file eof")]
+    ReadDataFileEof,
 }

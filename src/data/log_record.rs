@@ -24,3 +24,9 @@ impl LogRecord {
         todo!()
     }
 }
+
+/// 从文件读取的一条记录，包含其大小
+pub struct ReadLogRecord {
+    pub(crate) record: LogRecord,
+    pub(crate) size: u64,
+}
