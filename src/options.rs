@@ -18,3 +18,12 @@ pub enum IndexType {
     BTree,
     SkipList,
 }
+
+/// 迭代器选项
+#[derive(Default)]
+pub struct IteratorOptions {
+    /// 是否逆序
+    pub(crate) reverse: bool,
+    /// 前缀
+    pub(crate) prefix: Vec<u8>,
+}
