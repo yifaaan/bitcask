@@ -43,7 +43,7 @@ impl FileIo {
         match OpenOptions::new()
             .create(true)
             .read(true)
-            .append(true)
+            .append(true) // 只支持追加写入
             .open(file_path)
         {
             Ok(file) => Ok(Self {

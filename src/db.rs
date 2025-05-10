@@ -191,6 +191,7 @@ impl Engine {
                         data_file.read_log_record(offset)
                     }
                 };
+                // 读取记录，和记录在data file中的大小
                 let (record, record_size) = match read_record_res {
                     Ok(v) => (v.record, v.size),
                     Err(e) => {
