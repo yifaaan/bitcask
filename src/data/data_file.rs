@@ -107,6 +107,80 @@ impl DataFile {
 }
 
 fn create_data_file_name(dir_path: &Path, file_id: u32) -> PathBuf {
-    let file_name = format!("{:09}.{}", file_id, DATA_FILE_NAME_SUFFIX);
+    let file_name = format!("{:09}{}", file_id, DATA_FILE_NAME_SUFFIX);
     dir_path.join(file_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_data_file() {
+        let dir_path = std::env::temp_dir();
+        let data_file_res = DataFile::new(&dir_path, 0);
+        assert!(data_file_res.is_ok());
+        let data_file = data_file_res.unwrap();
+        assert_eq!(data_file.get_file_id(), 0);
+        assert_eq!(data_file.get_write_offset(), 0);
+        let file_path = create_data_file_name(&dir_path, 0);
+        println!("file_path: {}", file_path.display());
+        std::fs::remove_file(file_path).unwrap();
+
+        let data_file_res = DataFile::new(&dir_path, 12);
+        assert!(data_file_res.is_ok());
+        let data_file = data_file_res.unwrap();
+        assert_eq!(data_file.get_file_id(), 12);
+        assert_eq!(data_file.get_write_offset(), 0);
+        let file_path = create_data_file_name(&dir_path, 12);
+        std::fs::remove_file(file_path).unwrap();
+    }
+
+    #[test]
+    fn test_data_file_write() {
+        let dir_path = std::env::temp_dir();
+        let data_file_res = DataFile::new(&dir_path, 0);
+        assert!(data_file_res.is_ok());
+        let data_file = data_file_res.unwrap();
+        let s = b"hello world";
+        let write_res = data_file.write(s);
+        assert!(write_res.is_ok());
+        let write_size = write_res.unwrap();
+        assert_eq!(write_size, s.len());
+        assert_eq!(data_file.get_write_offset(), s.len() as u64);
+
+        let write_res = data_file.write(s);
+        assert!(write_res.is_ok());
+        let write_size = write_res.unwrap();
+        assert_eq!(write_size, s.len());
+        assert_eq!(data_file.get_write_offset(), s.len() as u64 * 2);
+
+        let s = b"aaabbccc";
+        let write_res = data_file.write(s);
+        assert!(write_res.is_ok());
+        let write_size = write_res.unwrap();
+        assert_eq!(write_size, s.len());
+        assert_eq!(data_file.get_write_offset(), 30);
+        let file_path = create_data_file_name(&dir_path, 0);
+        std::fs::remove_file(file_path).unwrap();
+    }
+
+    #[test]
+    fn test_data_file_sync() {
+        let dir_path = std::env::temp_dir();
+        let data_file_res = DataFile::new(&dir_path, 111);
+        assert!(data_file_res.is_ok());
+        let data_file = data_file_res.unwrap();
+        let s = b"hello world";
+        let write_res = data_file.write(s);
+        assert!(write_res.is_ok());
+        let write_size = write_res.unwrap();
+        assert_eq!(write_size, s.len());
+        assert_eq!(data_file.get_write_offset(), s.len() as u64);
+        let sync_res = data_file.sync();
+        assert!(sync_res.is_ok());
+        let file_path = create_data_file_name(&dir_path, 111);
+        println!("file_path: {}", file_path.display());
+        std::fs::remove_file(file_path).unwrap();
+    }
 }
