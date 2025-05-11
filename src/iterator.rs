@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use parking_lot::RwLock;
 
-use crate::{db::Engine, index::IndexIterator, options::IteratorOptions};
+use crate::{db::Engine, errors::Result, index::IndexIterator, options::IteratorOptions};
 
 pub struct Iterator<'a> {
     index_iter: Arc<RwLock<Box<dyn IndexIterator>>>,
@@ -18,6 +18,23 @@ impl Engine {
             index_iter: Arc::new(RwLock::new(self.index.iterator(opts))),
             engine: self,
         }
+    }
+
+    pub fn list_keys(&self) -> Result<Vec<Bytes>> {
+        self.index.list_keys()
+    }
+
+    pub fn fold<F>(&self, f: F) -> Result<()>
+    where
+        F: Fn(Bytes, Bytes) -> bool,
+    {
+        let mut iter = self.iter(IteratorOptions::default());
+        while let Some((k, v)) = iter.next() {
+            if !f(k, v) {
+                break;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -263,6 +280,66 @@ mod tests {
             // );
         }
 
+        std::fs::remove_dir_all(engine_dir).expect("Failed to remove test directory");
+    }
+
+    #[test]
+    fn test_list_keys() {
+        let mut engine_opts = Options {
+            dir_path: Default::default(),
+            data_file_size: 1024 * 1024,
+            sync_write: true,
+            index_type: IndexType::BTree,
+        };
+        engine_opts.dir_path = std::env::temp_dir().join("test_iterator_list_keys");
+
+        let engine_dir = engine_opts.dir_path.clone();
+        let engine = Engine::open(engine_opts).expect("Failed to open engine");
+
+        assert!(engine.list_keys().unwrap().is_empty());
+
+        engine
+            .put("aaa".into(), get_test_value(0))
+            .expect("Failed to put data");
+        engine
+            .put("aaab".into(), get_test_value(0))
+            .expect("Failed to put data");
+        engine
+            .put("aaac".into(), get_test_value(0))
+            .expect("Failed to put data");
+        assert!(engine.list_keys().unwrap().len() == 3);
+        std::fs::remove_dir_all(engine_dir).expect("Failed to remove test directory");
+    }
+
+    #[test]
+    fn test_fold() {
+        let mut engine_opts = Options {
+            dir_path: Default::default(),
+            data_file_size: 1024 * 1024,
+            sync_write: true,
+            index_type: IndexType::BTree,
+        };
+        engine_opts.dir_path = std::env::temp_dir().join("test_iterator_fold");
+
+        let engine_dir = engine_opts.dir_path.clone();
+        let engine = Engine::open(engine_opts).expect("Failed to open engine");
+
+        engine
+            .put("aaa".into(), get_test_value(0))
+            .expect("Failed to put data");
+        engine
+            .put("aaab".into(), get_test_value(0))
+            .expect("Failed to put data");
+        engine
+            .put("aaac".into(), get_test_value(0))
+            .expect("Failed to put data");
+
+        engine
+            .fold(|k, v| {
+                println!("key:{:?}, value:{:?}", k, v);
+                true
+            })
+            .unwrap();
         std::fs::remove_dir_all(engine_dir).expect("Failed to remove test directory");
     }
 }

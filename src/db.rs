@@ -159,8 +159,12 @@ impl Engine {
         Ok(())
     }
 
-    pub(crate) fn sync(&self) -> Result<()> {
-        self.active_file.write().sync()
+    pub fn sync(&self) -> Result<()> {
+        self.active_file.read().sync()
+    }
+
+    pub fn close(&self) -> Result<()> {
+        self.active_file.read().sync()
     }
 
     /// 将记录追加写到活跃数据文件，返回写入到文件的起始位置

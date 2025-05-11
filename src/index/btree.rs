@@ -1,7 +1,8 @@
+use bytes::Bytes;
 use parking_lot::RwLock;
 use std::{collections::BTreeMap, sync::Arc};
 
-use crate::{data::log_record::LogRecordPos, options::IteratorOptions};
+use crate::{data::log_record::LogRecordPos, errors::Result, options::IteratorOptions};
 
 use super::{IndexIterator, Indexer};
 
@@ -42,6 +43,10 @@ impl Indexer for BTree {
             idx: 0,
             options,
         })
+    }
+
+    fn list_keys(&self) -> Result<Vec<Bytes>> {
+        Ok(self.tree.read().keys().map(|k| k.clone().into()).collect())
     }
 }
 
