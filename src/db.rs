@@ -26,7 +26,7 @@ pub struct Engine {
     /// 旧数据文件
     older_files: Arc<RwLock<HashMap<u32, DataFile>>>,
     /// 内存索引
-    index: Box<dyn Indexer>,
+    pub(crate) index: Box<dyn Indexer>,
     /// 文件id,只用于启动时加载索引使用
     file_ids: Vec<u32>,
 }
@@ -43,6 +43,8 @@ impl Engine {
             })?;
         }
         let mut data_files = load_data_files(dir_path)?;
+        // 新数据文件在开头
+        data_files.reverse();
         let file_ids: Vec<_> = data_files.iter().map(|f| f.get_file_id()).collect();
         // 将旧数据文件保存到older_files
         let mut older_files = HashMap::new();
@@ -88,6 +90,7 @@ impl Engine {
         Ok(())
     }
 
+    /// 获取指定key的value
     pub fn get(&self, key: Bytes) -> Result<Bytes> {
         if key.is_empty() {
             return Err(Errors::KeyIsEmpty);
@@ -96,6 +99,11 @@ impl Engine {
         let Some(position) = self.index.get(key.to_vec()) else {
             return Err(Errors::KeyNotFound);
         };
+        self.get_value_by_position(&position)
+    }
+
+    /// 获取指定位置的value
+    pub(crate) fn get_value_by_position(&self, position: &LogRecordPos) -> Result<Bytes> {
         let active_file = self.active_file.read();
         let older_files = self.older_files.read();
         let log_record = match active_file.get_file_id() == position.file_id {

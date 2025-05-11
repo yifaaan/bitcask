@@ -113,6 +113,8 @@ fn create_data_file_name(dir_path: &Path, file_id: u32) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use crate::data::log_record::LogRecordType;
+
     use super::*;
 
     #[test]
@@ -180,6 +182,47 @@ mod tests {
         let sync_res = data_file.sync();
         assert!(sync_res.is_ok());
         let file_path = create_data_file_name(&dir_path, 111);
+        println!("file_path: {}", file_path.display());
+        std::fs::remove_file(file_path).unwrap();
+    }
+
+    #[test]
+    fn test_data_file_read_log_record() {
+        let dir_path = std::env::temp_dir();
+        let data_file_res = DataFile::new(&dir_path, 222);
+        assert!(data_file_res.is_ok());
+        let data_file = data_file_res.unwrap();
+        let record = LogRecord {
+            key: "hello".into(),
+            value: "world".into(),
+            rec_type: LogRecordType::Normal,
+        };
+        let encoded = record.encode();
+        data_file.write(&encoded).unwrap();
+        let read_res = data_file.read_log_record(0);
+        assert!(read_res.is_ok());
+        let read_log_record = read_res.unwrap();
+        assert_eq!(read_log_record.record.key, b"hello");
+        assert_eq!(read_log_record.record.value, b"world");
+        assert_eq!(read_log_record.record.rec_type, LogRecordType::Normal);
+        println!("first record length: {:?}", read_log_record.size);
+
+        let record = LogRecord {
+            key: "abc".into(),
+            value: "123".into(),
+            rec_type: LogRecordType::Normal,
+        };
+        let encoded = record.encode();
+        data_file.write(&encoded).unwrap();
+        let read_res = data_file.read_log_record(read_log_record.size);
+        assert!(read_res.is_ok());
+        let read_log_record = read_res.unwrap();
+        assert_eq!(read_log_record.record.key, b"abc");
+        assert_eq!(read_log_record.record.value, b"123");
+        assert_eq!(read_log_record.record.rec_type, LogRecordType::Normal);
+        println!("second record length: {:?}", read_log_record.size);
+
+        let file_path = create_data_file_name(&dir_path, 222);
         println!("file_path: {}", file_path.display());
         std::fs::remove_file(file_path).unwrap();
     }
