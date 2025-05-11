@@ -163,8 +163,6 @@ mod tests {
         let write_size = write_res.unwrap();
         assert_eq!(write_size, s.len());
         assert_eq!(data_file.get_write_offset(), 30);
-        let file_path = create_data_file_name(&dir_path, 0);
-        std::fs::remove_file(file_path).unwrap();
     }
 
     #[test]

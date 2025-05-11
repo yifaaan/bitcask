@@ -49,6 +49,10 @@ impl Engine {
         // 判断目录是否存在
         let dir_path = &opts.dir_path;
         if !dir_path.is_dir() {
+            // println!(
+            //     "Database dir not found, creating dir: {}",
+            //     dir_path.display()
+            // );
             std::fs::create_dir_all(dir_path).map_err(|e| {
                 warn!("Failed to create database dir: {}", e);
                 Errors::FailedToCreateDatabaseDir
@@ -79,10 +83,15 @@ impl Engine {
             index: new_indexer(idx_type),
             file_ids,
             batch_commit_mutex: Mutex::new(()),
-            sequence_number: Arc::new(AtomicUsize::new(0)),
+            sequence_number: Arc::new(AtomicUsize::new(1)),
         };
         // 读取数据文件来加载内存索引
-        engine.load_index_from_data_files()?;
+        let seq_number = engine.load_index_from_data_files()?;
+        if seq_number > NON_TRANSACTION_SEQ_NUMBER {
+            engine
+                .sequence_number
+                .store(seq_number + 1, std::sync::atomic::Ordering::SeqCst); // 更新到下一个事务序列号
+        }
         Ok(engine)
     }
 
@@ -206,9 +215,11 @@ impl Engine {
     /// 2. 将记录写入索引
     /// 3. 如果是删除记录，则从索引中删除
     /// 4. 如果是正常记录，则将记录写入索引
-    fn load_index_from_data_files(&mut self) -> Result<()> {
+    fn load_index_from_data_files(&mut self) -> Result<usize> {
+        // 最新的事务序列号
+        let mut current_seq_number = NON_TRANSACTION_SEQ_NUMBER;
         if self.file_ids.is_empty() {
-            return Ok(());
+            return Ok(current_seq_number);
         }
         let mut transaction_records: HashMap<usize, Vec<TransactionRecord>> = HashMap::new();
         let active_file = self.active_file.read();
@@ -220,7 +231,6 @@ impl Engine {
                     true => active_file.read_log_record(offset),
                     false => {
                         let data_file = older_files.get(file_id).unwrap();
-
                         data_file.read_log_record(offset)
                     }
                 };
@@ -273,7 +283,7 @@ impl Engine {
                         }
                     }
                 }
-
+                current_seq_number = current_seq_number.max(seq_number);
                 // 更新偏移量
                 offset += record_size;
             }
@@ -282,7 +292,7 @@ impl Engine {
                 active_file.set_write_offset(offset);
             }
         }
-        Ok(())
+        Ok(current_seq_number)
     }
 
     fn update_index(

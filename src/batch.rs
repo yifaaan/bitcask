@@ -82,6 +82,7 @@ impl WriteBatch<'_> {
 
         // 加锁，防止多个写入操作同时进行
         let batch_commit_lock = self.engine.batch_commit_mutex.lock();
+        // 更新到下一个事务序列号
         let sequence_number = self
             .engine
             .sequence_number
@@ -147,7 +148,10 @@ pub(crate) fn parse_record_sequence_number_with_key(key: &[u8]) -> (usize, Vec<u
 
 #[cfg(test)]
 mod tests {
-    use crate::options::{IndexType, Options};
+    use crate::{
+        options::{IndexType, Options},
+        util::rand_kv::{get_test_key, get_test_value},
+    };
 
     use super::*;
 
@@ -155,6 +159,41 @@ mod tests {
     fn test_write_batch() {
         let engine_opts = Options {
             dir_path: std::env::temp_dir().join("test_db_write_batch"),
+            data_file_size: 8 * 1024 * 1024,
+            sync_write: false,
+            index_type: IndexType::BTree,
+        };
+        let engine_dir = engine_opts.dir_path.clone();
+        let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
+        let mut write_batch = engine.new_write_batch(WriteBatchOptions::default());
+        // 写入后未提交
+        let put_res = write_batch.put("k1".into(), "v1".into());
+        assert_eq!(put_res, Ok(()));
+        let put_res = write_batch.put("k2".into(), "v2".into());
+        assert_eq!(put_res, Ok(()));
+        let get_res = engine.get("k1".into());
+        assert!(get_res.is_err());
+
+        // 提交
+        let commit_res = write_batch.commit();
+        assert_eq!(commit_res, Ok(()));
+        let get_res = engine.get("k1".into());
+        assert_eq!(get_res, Ok("v1".into()));
+
+        assert_eq!(
+            2,
+            engine
+                .sequence_number
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
+
+        std::fs::remove_dir_all(engine_dir).expect("Failed to remove engine dir");
+    }
+
+    #[test]
+    fn test_write_batch_reopen() {
+        let engine_opts = Options {
+            dir_path: std::env::temp_dir().join("test_write_batch_reopen"),
             data_file_size: 8 * 1024 * 1024,
             sync_write: false,
             index_type: IndexType::BTree,
@@ -176,12 +215,59 @@ mod tests {
         let get_res = engine.get("k1".into());
         assert_eq!(get_res, Ok("v1".into()));
 
+        engine.close().expect("Failed to close");
+
+        let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
         assert_eq!(
-            1,
+            2,
             engine
                 .sequence_number
                 .load(std::sync::atomic::Ordering::SeqCst)
         );
+
+        let mut write_batch = engine.new_write_batch(WriteBatchOptions::default());
+        let put_res = write_batch.put("k3".into(), "v3".into());
+        assert_eq!(put_res, Ok(()));
+        let put_res = write_batch.put("k4".into(), "v4".into());
+        assert_eq!(put_res, Ok(()));
+        let commit_res = write_batch.commit();
+        assert_eq!(commit_res, Ok(()));
+        write_batch.commit().expect("Failed to commit");
+
+        assert_eq!(
+            3,
+            engine
+                .sequence_number
+                .load(std::sync::atomic::Ordering::SeqCst)
+        );
+        let get_res = engine.get("k3".into());
+        assert_eq!(get_res, Ok("v3".into()));
+
+        std::fs::remove_dir_all(engine_dir).expect("Failed to remove engine dir");
+    }
+
+    #[test]
+    fn test_write_batch_shutdown() {
+        let engine_opts = Options {
+            dir_path: std::env::temp_dir().join("test_write_batch_shutdown"),
+            data_file_size: 8 * 1024 * 1024,
+            sync_write: false,
+            index_type: IndexType::BTree,
+        };
+        let engine_dir = engine_opts.dir_path.clone();
+        let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
+        let mut write_batch = engine.new_write_batch(WriteBatchOptions {
+            max_batch_size: 10000000,
+            sync_write: false,
+        });
+
+        for i in 0..1000000 {
+            write_batch
+                .put(get_test_key(i), get_test_value(i))
+                .expect("Failed to put put");
+        }
+
+        write_batch.commit().expect("Failed to commit");
 
         std::fs::remove_dir_all(engine_dir).expect("Failed to remove engine dir");
     }
