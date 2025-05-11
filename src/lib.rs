@@ -1,3 +1,4 @@
+mod batch;
 mod data;
 mod db;
 mod errors;
@@ -6,7 +7,6 @@ mod index;
 mod iterator;
 mod options;
 mod util;
-
 #[cfg(test)]
 mod tests {
     #[test]

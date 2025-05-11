@@ -10,10 +10,12 @@ pub struct LogRecordPos {
     pub(crate) offset: u64,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
 pub enum LogRecordType {
+    #[default]
     Normal = 1,
     Deleted = 2,
+    TxnFinished = 3,
 }
 
 impl From<u8> for LogRecordType {
@@ -21,10 +23,13 @@ impl From<u8> for LogRecordType {
         match value {
             1 => LogRecordType::Normal,
             2 => LogRecordType::Deleted,
+            3 => LogRecordType::TxnFinished,
             _ => panic!("invalid log record type: {}", value),
         }
     }
 }
+
+#[derive(Default, Debug)]
 pub struct LogRecord {
     pub(crate) key: Vec<u8>,
     pub(crate) value: Vec<u8>,
@@ -94,6 +99,12 @@ pub fn max_log_record_header_size() -> usize {
     // length_delimiter_len:编码一个长度分隔符所需的字节数,长度分隔符是用来表示一个长度可变的字段的长度的，
     // 在编码变长消息之前，需要预先计算出需要多少空间来存储长度分隔符
     std::mem::size_of::<LogRecordType>() + prost::length_delimiter_len(u32::MAX as usize) * 2
+}
+
+/// 事务记录
+pub struct TransactionRecord {
+    pub(crate) record: LogRecord,
+    pub(crate) position: LogRecordPos,
 }
 
 #[cfg(test)]

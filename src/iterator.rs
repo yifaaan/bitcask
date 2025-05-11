@@ -206,12 +206,14 @@ mod tests {
 
     #[test]
     fn test_iterator_reverse() {
-        let engine_opts = Options {
-            dir_path: std::env::temp_dir().join("test_iterator_reverse"),
+        let mut engine_opts = Options {
+            dir_path: Default::default(),
             data_file_size: 1024 * 1024,
             sync_write: true,
             index_type: IndexType::BTree,
         };
+        engine_opts.dir_path = std::env::temp_dir().join("test_iterator_reverse");
+
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts).expect("Failed to open engine");
 
