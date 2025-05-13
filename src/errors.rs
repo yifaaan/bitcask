@@ -56,4 +56,10 @@ pub enum Errors {
 
     #[error("Batch size exceeded")]
     BatchSizeExceeded,
+
+    #[error("Merge in progress, try again later")]
+    MergeInProgress,
+
+    #[error("Failed to remove dir")]
+    RemoveDirError,
 }

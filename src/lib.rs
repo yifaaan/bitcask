@@ -5,8 +5,10 @@ mod errors;
 mod fio;
 mod index;
 mod iterator;
+mod merge;
 mod options;
 mod util;
+
 #[cfg(test)]
 mod tests {
     #[test]

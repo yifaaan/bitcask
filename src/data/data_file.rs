@@ -10,9 +10,11 @@ use bytes::{Buf, BytesMut};
 use parking_lot::RwLock;
 use prost::{decode_length_delimiter, length_delimiter_len};
 
-use super::log_record::ReadLogRecord;
+use super::log_record::{LogRecordPos, LogRecordType, ReadLogRecord};
 
 pub const DATA_FILE_NAME_SUFFIX: &str = ".data";
+pub(crate) const HINT_FILE_NAME: &str = "hint-index";
+pub(crate) const MERGE_FINISHED_FILE_NAME: &str = "merge-finished";
 
 /// 数据文件
 pub struct DataFile {
@@ -36,22 +38,27 @@ impl DataFile {
         })
     }
 
+    /// 设置写偏移
     pub fn set_write_offset(&self, offset: u64) {
         *self.write_offset.write() = offset;
     }
 
+    /// 获取写偏移
     pub fn get_write_offset(&self) -> u64 {
         *self.write_offset.read()
     }
 
+    /// 同步数据文件
     pub fn sync(&self) -> Result<()> {
         self.io_manager.sync()
     }
 
+    /// 获取文件id
     pub fn get_file_id(&self) -> u32 {
         *self.file_id.read()
     }
 
+    /// 写入数据
     pub fn write(&self, buf: &[u8]) -> Result<usize> {
         let n_bytes = self.io_manager.write(buf)?;
         // 更新写偏移
@@ -104,9 +111,43 @@ impl DataFile {
             size: (actual_header_size + key_len + value_len + 4) as u64,
         })
     }
+
+    /// 打开或创建hint索引文件
+    pub fn new_hint_file(dir_path: &Path) -> Result<Self> {
+        let file_name = dir_path.join(HINT_FILE_NAME);
+        let io_manager = new_io_manager(&file_name)?;
+        Ok(Self {
+            file_id: Arc::new(RwLock::new(0)),
+            write_offset: Default::default(),
+            io_manager: Box::new(io_manager),
+        })
+    }
+
+    /// 打开或创建标识merge完成的文件
+    pub fn new_merge_finished_file(dir_path: &Path) -> Result<Self> {
+        let file_name = dir_path.join(MERGE_FINISHED_FILE_NAME);
+        let io_manager = new_io_manager(&file_name)?;
+        Ok(Self {
+            file_id: Arc::new(RwLock::new(0)),
+            write_offset: Default::default(),
+            io_manager: Box::new(io_manager),
+        })
+    }
+
+    /// 写入hint索引记录
+    pub fn write_hint_record(&self, key: Vec<u8>, record_pos: LogRecordPos) -> Result<()> {
+        let hint_record = LogRecord {
+            key,
+            value: record_pos.encode(),
+            rec_type: LogRecordType::Normal,
+        };
+        let encoded_record = hint_record.encode();
+        self.write(&encoded_record)?;
+        Ok(())
+    }
 }
 
-fn create_data_file_name(dir_path: &Path, file_id: u32) -> PathBuf {
+pub(crate) fn create_data_file_name(dir_path: &Path, file_id: u32) -> PathBuf {
     let file_name = format!("{:09}{}", file_id, DATA_FILE_NAME_SUFFIX);
     dir_path.join(file_name)
 }

@@ -16,11 +16,12 @@ use crate::{
         parse_record_sequence_number_with_key,
     },
     data::{
-        data_file::{DATA_FILE_NAME_SUFFIX, DataFile},
+        data_file::{DATA_FILE_NAME_SUFFIX, DataFile, MERGE_FINISHED_FILE_NAME},
         log_record::{LogRecord, LogRecordPos, LogRecordType, TransactionRecord},
     },
     errors::{Errors, Result},
     index::{Indexer, new_indexer},
+    merge::load_merge_files,
     options::Options,
 };
 
@@ -28,11 +29,11 @@ const INITIAL_DATA_FILE_ID: u32 = 0;
 
 pub struct Engine {
     /// 配置
-    options: Arc<Options>,
+    pub(crate) options: Arc<Options>,
     /// 活跃数据文件
-    active_file: Arc<RwLock<DataFile>>,
+    pub(crate) active_file: Arc<RwLock<DataFile>>,
     /// 旧数据文件
-    older_files: Arc<RwLock<HashMap<u32, DataFile>>>,
+    pub(crate) older_files: Arc<RwLock<HashMap<u32, DataFile>>>,
     /// 内存索引
     pub(crate) index: Box<dyn Indexer>,
     /// 文件id,只用于启动时加载索引使用
@@ -41,6 +42,8 @@ pub struct Engine {
     pub(crate) batch_commit_mutex: Mutex<()>,
     /// 序列号
     pub(crate) sequence_number: Arc<AtomicUsize>,
+    /// 防止多个线程同时merge
+    pub(crate) merge_lock: Mutex<()>,
 }
 
 impl Engine {
@@ -58,6 +61,10 @@ impl Engine {
                 Errors::FailedToCreateDatabaseDir
             })?;
         }
+
+        // 加载merge目录,删除已merge的数据文件，将已merge的数据文件移动到当前db
+        load_merge_files(dir_path)?;
+
         let mut data_files = load_data_files(dir_path)?;
         // 新数据文件在开头
         data_files.reverse();
@@ -84,7 +91,12 @@ impl Engine {
             file_ids,
             batch_commit_mutex: Mutex::new(()),
             sequence_number: Arc::new(AtomicUsize::new(1)),
+            merge_lock: Mutex::new(()),
         };
+
+        // 读取merge目录，从索引文件hint中，加载内存索引
+        engine.load_index_from_hint_file()?;
+
         // 读取数据文件来加载内存索引
         let seq_number = engine.load_index_from_data_files()?;
         if seq_number > NON_TRANSACTION_SEQ_NUMBER {
@@ -221,10 +233,28 @@ impl Engine {
         if self.file_ids.is_empty() {
             return Ok(current_seq_number);
         }
+
+        let mut unmerged_file_id = 0;
+        let mut has_merge = false;
+        let merge_finished_file_name = self.options.dir_path.join(MERGE_FINISHED_FILE_NAME);
+        // 如果merge完成文件存在，则从不用从已被merge的文件中加载索引
+        if merge_finished_file_name.is_file() {
+            let merge_finished_file = DataFile::new_merge_finished_file(&self.options.dir_path)?;
+            let read_log_record = merge_finished_file.read_log_record(0)?;
+            unmerged_file_id = String::from_utf8(read_log_record.record.value)
+                .unwrap()
+                .parse::<u32>()?;
+            has_merge = true;
+        }
+
         let mut transaction_records: HashMap<usize, Vec<TransactionRecord>> = HashMap::new();
         let active_file = self.active_file.read();
         let older_files = self.older_files.read();
         for (i, file_id) in self.file_ids.iter().enumerate() {
+            // 文件id小于unmerged_file_id，说明已经从hint索引文件中加载过索引，跳过
+            if has_merge && *file_id < unmerged_file_id {
+                continue;
+            }
             let mut offset = 0;
             loop {
                 let read_record_res = match *file_id == active_file.get_file_id() {
@@ -273,7 +303,7 @@ impl Engine {
                         _ => {
                             // 去掉事务序列号
                             record.key = key;
-                            // 根据事务序列号，插入对应的分组
+                            // 根据事务序列号，插入对应的分组,将其暂存到内存，知道读到对应的TxnFinished记录，才将该组记录插入索引
                             transaction_records.entry(seq_number).or_default().push(
                                 TransactionRecord {
                                     record,

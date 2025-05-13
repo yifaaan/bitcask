@@ -1,13 +1,39 @@
 #![allow(dead_code)]
 
 use bytes::{BufMut, BytesMut};
-use prost::{encode_length_delimiter, length_delimiter_len};
+use prost::{decode_length_delimiter, encode_length_delimiter, length_delimiter_len};
 
 /// record position in the log file for index
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct LogRecordPos {
     pub(crate) file_id: u32,
     pub(crate) offset: u64,
+}
+
+impl LogRecordPos {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut buf = BytesMut::new();
+        encode_length_delimiter(self.file_id as usize, &mut buf).expect("Failed to encode file id");
+        encode_length_delimiter(self.offset as usize, &mut buf).expect("Failed to encode offset");
+        buf.to_vec()
+    }
+}
+
+pub(crate) fn decode_log_record_pos(buf: &[u8]) -> LogRecordPos {
+    let mut buf = BytesMut::from(buf);
+    let file_id = match decode_length_delimiter(&mut buf) {
+        Ok(v) => v as u32,
+        Err(e) => {
+            panic!("Failed to decode file id: {}", e);
+        }
+    };
+    let offset = match decode_length_delimiter(&mut buf) {
+        Ok(v) => v as u64,
+        Err(e) => {
+            panic!("Failed to decode offset: {}", e);
+        }
+    };
+    LogRecordPos { file_id, offset }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
