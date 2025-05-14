@@ -13,6 +13,7 @@ pub trait IOManager: Send + Sync {
     fn read(&self, buf: &mut [u8], offset: u64) -> Result<usize>;
     fn write(&self, buf: &[u8]) -> Result<usize>;
     fn sync(&self) -> Result<()>;
+    fn size(&self) -> u64;
 }
 
 /// Create a new IOManager

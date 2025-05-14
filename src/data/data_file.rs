@@ -15,6 +15,7 @@ use super::log_record::{LogRecordPos, LogRecordType, ReadLogRecord};
 pub const DATA_FILE_NAME_SUFFIX: &str = ".data";
 pub(crate) const HINT_FILE_NAME: &str = "hint-index";
 pub(crate) const MERGE_FINISHED_FILE_NAME: &str = "merge-finished";
+pub(crate) const SEQUENCE_NUMBER_FILE_NAME: &str = "sequence-number";
 
 /// 数据文件
 pub struct DataFile {
@@ -134,6 +135,17 @@ impl DataFile {
         })
     }
 
+    /// 打开或创建存储事务序列号的文件
+    pub fn new_sequence_number_file(dir_path: &Path) -> Result<Self> {
+        let file_name = dir_path.join(SEQUENCE_NUMBER_FILE_NAME);
+        let io_manager = new_io_manager(&file_name)?;
+        Ok(Self {
+            file_id: Arc::new(RwLock::new(0)),
+            write_offset: Default::default(),
+            io_manager: Box::new(io_manager),
+        })
+    }
+
     /// 写入hint索引记录
     pub fn write_hint_record(&self, key: Vec<u8>, record_pos: LogRecordPos) -> Result<()> {
         let hint_record = LogRecord {
@@ -144,6 +156,11 @@ impl DataFile {
         let encoded_record = hint_record.encode();
         self.write(&encoded_record)?;
         Ok(())
+    }
+
+    /// 获取文件大小
+    pub fn file_size(&self) -> u64 {
+        self.io_manager.size()
     }
 }
 

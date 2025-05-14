@@ -12,7 +12,7 @@ use prost::{decode_length_delimiter, encode_length_delimiter};
 use crate::data::log_record::{LogRecord, LogRecordType};
 use crate::db::Engine;
 use crate::errors::{Errors, Result};
-use crate::options::WriteBatchOptions;
+use crate::options::{IndexType, WriteBatchOptions};
 
 const TX_FIN_KEY: &[u8] = b"txn-fin";
 pub(crate) const NON_TRANSACTION_SEQ_NUMBER: usize = 0;
@@ -28,12 +28,18 @@ pub struct WriteBatch<'a> {
 }
 
 impl Engine {
-    pub fn new_write_batch(&self, options: WriteBatchOptions) -> WriteBatch {
-        WriteBatch {
+    pub fn new_write_batch(&self, options: WriteBatchOptions) -> Result<WriteBatch> {
+        if !self.sequence_number_file_exists
+            && self.options.index_type == IndexType::BPlusTree
+            && !self.is_first_load
+        {
+            return Err(Errors::UnableToUseWriteBatch);
+        }
+        Ok(WriteBatch {
             pending_writes: Arc::new(Mutex::new(HashMap::new())),
             options,
             engine: self,
-        }
+        })
     }
 }
 
@@ -165,7 +171,9 @@ mod tests {
         };
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
-        let mut write_batch = engine.new_write_batch(WriteBatchOptions::default());
+        let mut write_batch = engine
+            .new_write_batch(WriteBatchOptions::default())
+            .expect("Failed to create write batch");
         // 写入后未提交
         let put_res = write_batch.put("k1".into(), "v1".into());
         assert_eq!(put_res, Ok(()));
@@ -200,7 +208,9 @@ mod tests {
         };
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
-        let mut write_batch = engine.new_write_batch(WriteBatchOptions::default());
+        let mut write_batch = engine
+            .new_write_batch(WriteBatchOptions::default())
+            .expect("Failed to create write batch");
         // 写入后未提交
         let put_res = write_batch.put("k1".into(), "v1".into());
         assert_eq!(put_res, Ok(()));
@@ -225,7 +235,9 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst)
         );
 
-        let mut write_batch = engine.new_write_batch(WriteBatchOptions::default());
+        let mut write_batch = engine
+            .new_write_batch(WriteBatchOptions::default())
+            .expect("Failed to create write batch");
         let put_res = write_batch.put("k3".into(), "v3".into());
         assert_eq!(put_res, Ok(()));
         let put_res = write_batch.put("k4".into(), "v4".into());
@@ -256,10 +268,12 @@ mod tests {
         };
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
-        let mut write_batch = engine.new_write_batch(WriteBatchOptions {
-            max_batch_size: 10000000,
-            sync_write: false,
-        });
+        let mut write_batch = engine
+            .new_write_batch(WriteBatchOptions {
+                max_batch_size: 10000000,
+                sync_write: false,
+            })
+            .expect("Failed to create write batch");
 
         for i in 0..1000000 {
             write_batch

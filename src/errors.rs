@@ -62,4 +62,7 @@ pub enum Errors {
 
     #[error("Failed to remove dir")]
     RemoveDirError,
+
+    #[error("Unable to use write batch")]
+    UnableToUseWriteBatch,
 }

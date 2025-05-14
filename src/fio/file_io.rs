@@ -36,6 +36,10 @@ impl IOManager for FileIo {
             Errors::SyncFileError
         })
     }
+    fn size(&self) -> u64 {
+        let read_guard = self.fd.read();
+        read_guard.metadata().unwrap().len()
+    }
 }
 
 impl FileIo {

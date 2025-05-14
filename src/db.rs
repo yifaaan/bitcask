@@ -7,7 +7,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use log::warn;
+use log::{error, warn};
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
@@ -16,16 +16,19 @@ use crate::{
         parse_record_sequence_number_with_key,
     },
     data::{
-        data_file::{DATA_FILE_NAME_SUFFIX, DataFile, MERGE_FINISHED_FILE_NAME},
+        data_file::{
+            DATA_FILE_NAME_SUFFIX, DataFile, MERGE_FINISHED_FILE_NAME, SEQUENCE_NUMBER_FILE_NAME,
+        },
         log_record::{LogRecord, LogRecordPos, LogRecordType, TransactionRecord},
     },
     errors::{Errors, Result},
     index::{Indexer, new_indexer},
     merge::load_merge_files,
-    options::Options,
+    options::{IndexType, Options},
 };
 
 const INITIAL_DATA_FILE_ID: u32 = 0;
+const SEQUENCE_NUMBER_KEY: &str = "sequence.number";
 
 pub struct Engine {
     /// 配置
@@ -44,28 +47,39 @@ pub struct Engine {
     pub(crate) sequence_number: Arc<AtomicUsize>,
     /// 防止多个线程同时merge
     pub(crate) merge_lock: Mutex<()>,
+    /// 事务序列号文件是否存在
+    pub(crate) sequence_number_file_exists: bool,
+    /// 是否是首次加载db
+    pub(crate) is_first_load: bool,
 }
 
 impl Engine {
     pub fn open(opts: Options) -> Result<Self> {
         check_options(&opts)?;
         // 判断目录是否存在
-        let dir_path = &opts.dir_path;
+        let dir_path = opts.dir_path.clone();
+        let mut is_first_load = false;
         if !dir_path.is_dir() {
             // println!(
             //     "Database dir not found, creating dir: {}",
             //     dir_path.display()
             // );
-            std::fs::create_dir_all(dir_path).map_err(|e| {
+            is_first_load = true;
+            std::fs::create_dir_all(&dir_path).map_err(|e| {
                 warn!("Failed to create database dir: {}", e);
                 Errors::FailedToCreateDatabaseDir
             })?;
         }
+        // 空目录也认为是首次加载
+        let entries = std::fs::read_dir(&dir_path).expect("Failed to read database dir");
+        if entries.count() == 0 {
+            is_first_load = true;
+        }
 
         // 加载merge目录,删除已merge的数据文件，将已merge的数据文件移动到当前db
-        load_merge_files(dir_path)?;
+        load_merge_files(&dir_path)?;
 
-        let mut data_files = load_data_files(dir_path)?;
+        let mut data_files = load_data_files(&dir_path)?;
         // 新数据文件在开头
         data_files.reverse();
         let file_ids: Vec<_> = data_files.iter().map(|f| f.get_file_id()).rev().collect();
@@ -80,29 +94,46 @@ impl Engine {
         // 最后一个是活跃数据文件
         let active_file = match data_files.pop() {
             Some(file) => file,
-            None => DataFile::new(dir_path, INITIAL_DATA_FILE_ID)?,
+            None => DataFile::new(&dir_path, INITIAL_DATA_FILE_ID)?,
         };
         let idx_type = opts.index_type;
         let mut engine = Self {
-            options: Arc::new(opts),
+            options: Arc::new(opts.clone()),
             active_file: Arc::new(RwLock::new(active_file)),
             older_files: Arc::new(RwLock::new(older_files)),
-            index: new_indexer(idx_type),
+            index: new_indexer(idx_type, &dir_path),
             file_ids,
             batch_commit_mutex: Mutex::new(()),
             sequence_number: Arc::new(AtomicUsize::new(1)),
             merge_lock: Mutex::new(()),
+            sequence_number_file_exists: false,
+            is_first_load,
         };
 
-        // 读取merge目录，从索引文件hint中，加载内存索引
-        engine.load_index_from_hint_file()?;
+        // B+Tree索引，不需要从数据文件加载索引
+        if opts.index_type != IndexType::BPlusTree {
+            // 读取merge目录，从索引文件hint中，加载内存索引
+            engine.load_index_from_hint_file()?;
 
-        // 读取数据文件来加载内存索引
-        let seq_number = engine.load_index_from_data_files()?;
-        if seq_number > NON_TRANSACTION_SEQ_NUMBER {
+            // 读取数据文件来加载内存索引
+            let seq_number = engine.load_index_from_data_files()?;
+            if seq_number > NON_TRANSACTION_SEQ_NUMBER {
+                engine
+                    .sequence_number
+                    .store(seq_number + 1, std::sync::atomic::Ordering::SeqCst); // 更新到下一个事务序列号
+            }
+        }
+
+        if opts.index_type == IndexType::BPlusTree {
+            // 从sequence number文件中，加载事务序列号
+            let (exists, seq_number) = engine.load_sequence_number_from_file();
+            engine.sequence_number_file_exists = exists;
             engine
                 .sequence_number
-                .store(seq_number + 1, std::sync::atomic::Ordering::SeqCst); // 更新到下一个事务序列号
+                .store(seq_number, std::sync::atomic::Ordering::SeqCst);
+            // 设置活跃文件的写偏移
+            let active_file = engine.active_file.write();
+            active_file.set_write_offset(active_file.file_size());
         }
         Ok(engine)
     }
@@ -185,6 +216,20 @@ impl Engine {
     }
 
     pub fn close(&self) -> Result<()> {
+        // 写入事务序列号
+        let sequence_number_file = DataFile::new_sequence_number_file(&self.options.dir_path)?;
+        let record = LogRecord {
+            key: SEQUENCE_NUMBER_KEY.as_bytes().to_vec(),
+            value: self
+                .sequence_number
+                .load(std::sync::atomic::Ordering::SeqCst)
+                .to_string()
+                .into_bytes(),
+            rec_type: LogRecordType::Normal,
+        };
+        sequence_number_file.sync()?;
+
+        sequence_number_file.write(&record.encode())?;
         self.active_file.read().sync()
     }
 
@@ -340,6 +385,36 @@ impl Engine {
             return Err(Errors::FailedToUpdateIndex);
         }
         Ok(())
+    }
+
+    fn load_sequence_number_from_file(&self) -> (bool, usize) {
+        let file_name = self.options.dir_path.join(SEQUENCE_NUMBER_FILE_NAME);
+        if !file_name.is_file() {
+            return (false, 0);
+        }
+        let sequence_number_file = DataFile::new_sequence_number_file(&self.options.dir_path)
+            .expect("Failed to create sequence number file");
+        let record = match sequence_number_file.read_log_record(0) {
+            Ok(v) => v.record,
+            Err(e) => {
+                error!("Failed to read sequence number file: {}", e);
+                return (false, 0);
+            }
+        };
+        let seq_number = String::from_utf8(record.value)
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+        std::fs::remove_file(file_name).unwrap();
+        (true, seq_number)
+    }
+}
+
+impl Drop for Engine {
+    fn drop(&mut self) {
+        if let Err(e) = self.close() {
+            error!("Failed to close engine: {}", e);
+        }
     }
 }
 

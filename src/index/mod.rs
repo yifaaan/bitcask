@@ -1,6 +1,10 @@
 #![allow(dead_code)]
 
-pub mod btree;
+mod bptree;
+mod btree;
+mod skiplist;
+
+use std::path::Path;
 
 use bytes::Bytes;
 
@@ -19,10 +23,11 @@ pub trait Indexer: Send + Sync {
     fn list_keys(&self) -> Result<Vec<Bytes>>;
 }
 
-pub fn new_indexer(idx_type: IndexType) -> Box<dyn Indexer> {
+pub fn new_indexer(idx_type: IndexType, dir_path: &Path) -> Box<dyn Indexer> {
     match idx_type {
         IndexType::BTree => Box::new(btree::BTree::new()),
-        IndexType::SkipList => todo!(),
+        IndexType::SkipList => Box::new(skiplist::SkipList::new()),
+        IndexType::BPlusTree => Box::new(bptree::BPlusTree::new(dir_path)),
     }
 }
 

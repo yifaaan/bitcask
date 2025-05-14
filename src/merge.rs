@@ -11,7 +11,10 @@ use crate::{
         parse_record_sequence_number_with_key,
     },
     data::{
-        data_file::{DataFile, HINT_FILE_NAME, MERGE_FINISHED_FILE_NAME, create_data_file_name},
+        data_file::{
+            DataFile, HINT_FILE_NAME, MERGE_FINISHED_FILE_NAME, SEQUENCE_NUMBER_FILE_NAME,
+            create_data_file_name,
+        },
         log_record::{LogRecord, LogRecordType, decode_log_record_pos},
     },
     db::Engine,
@@ -177,6 +180,8 @@ pub(crate) fn load_merge_files(dir_path: &Path) -> Result<()> {
         let file_name = file_name_os.to_str().unwrap();
         if file_name.ends_with(MERGE_FINISHED_FILE_NAME) {
             merge_finished = true;
+        } else if file_name.ends_with(SEQUENCE_NUMBER_FILE_NAME) {
+            continue;
         } else {
             merged_file_names.push(file_name_os);
         }

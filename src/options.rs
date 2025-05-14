@@ -23,15 +23,16 @@ impl Default for Options {
             dir_path: PathBuf::default(),
             data_file_size: DEFAULT_DATA_FILE_SIZE_BYTES,
             sync_write: false,
-            index_type: IndexType::BTree,
+            index_type: IndexType::BPlusTree,
         }
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 pub enum IndexType {
     BTree,
     SkipList,
+    BPlusTree,
 }
 
 /// 迭代器选项
