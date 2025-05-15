@@ -5,7 +5,7 @@ use std::path::PathBuf;
 const DEFAULT_DATA_FILE_SIZE_BYTES: u64 = 256 * 1024 * 1024; // 256MB
 
 /// 数据库选项
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Options {
     /// 数据库目录
     pub(crate) dir_path: PathBuf,
@@ -13,6 +13,8 @@ pub struct Options {
     pub(crate) data_file_size: u64,
     /// 是否立刻持久化
     pub(crate) sync_write: bool,
+    /// 累计写入阈值后再持久化
+    pub(crate) bytes_per_sync: usize,
     /// 索引类型
     pub(crate) index_type: IndexType,
 }
@@ -23,12 +25,13 @@ impl Default for Options {
             dir_path: PathBuf::default(),
             data_file_size: DEFAULT_DATA_FILE_SIZE_BYTES,
             sync_write: false,
+            bytes_per_sync: 0,
             index_type: IndexType::BPlusTree,
         }
     }
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum IndexType {
     BTree,
     SkipList,

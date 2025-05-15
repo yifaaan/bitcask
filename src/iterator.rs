@@ -80,6 +80,7 @@ mod tests {
             dir_path: std::env::temp_dir().join("test_iterator_seek"),
             data_file_size: 1024 * 1024,
             sync_write: true,
+            bytes_per_sync: 100,
             index_type: IndexType::BTree,
         };
         let engine_dir = engine_opts.dir_path.clone();
@@ -168,6 +169,7 @@ mod tests {
             dir_path: std::env::temp_dir().join("test_iterator_prefix"),
             data_file_size: 1024 * 1024,
             sync_write: true,
+            bytes_per_sync: 100,
             index_type: IndexType::BTree,
         };
         let engine_dir = engine_opts.dir_path.clone();
@@ -227,6 +229,7 @@ mod tests {
             dir_path: Default::default(),
             data_file_size: 1024 * 1024,
             sync_write: true,
+            bytes_per_sync: 100,
             index_type: IndexType::BTree,
         };
         engine_opts.dir_path = std::env::temp_dir().join("test_iterator_reverse");
@@ -289,6 +292,7 @@ mod tests {
             dir_path: Default::default(),
             data_file_size: 1024 * 1024,
             sync_write: true,
+            bytes_per_sync: 100,
             index_type: IndexType::BTree,
         };
         engine_opts.dir_path = std::env::temp_dir().join("test_iterator_list_keys");
@@ -317,6 +321,7 @@ mod tests {
             dir_path: Default::default(),
             data_file_size: 1024 * 1024,
             sync_write: true,
+            bytes_per_sync: 100,
             index_type: IndexType::BTree,
         };
         engine_opts.dir_path = std::env::temp_dir().join("test_iterator_fold");

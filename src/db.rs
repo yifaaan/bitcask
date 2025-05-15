@@ -2,11 +2,13 @@
 
 use std::{
     collections::HashMap,
+    fs::File,
     path::Path,
     sync::{Arc, atomic::AtomicUsize},
 };
 
 use bytes::Bytes;
+use fs2::FileExt;
 use log::{error, warn};
 use parking_lot::{Mutex, RwLock};
 
@@ -29,6 +31,7 @@ use crate::{
 
 const INITIAL_DATA_FILE_ID: u32 = 0;
 const SEQUENCE_NUMBER_KEY: &str = "sequence.number";
+pub(crate) const FILE_LOCK_NAME: &str = "file-lock";
 
 pub struct Engine {
     /// 配置
@@ -51,6 +54,10 @@ pub struct Engine {
     pub(crate) sequence_number_file_exists: bool,
     /// 是否是首次加载db
     pub(crate) is_first_load: bool,
+    /// 文件锁,保证在db目录只打开一个db实例
+    pub(crate) lock_file: File,
+    /// 累计写入阈值
+    pub(crate) bytes_write: Arc<AtomicUsize>,
 }
 
 impl Engine {
@@ -70,6 +77,22 @@ impl Engine {
                 Errors::FailedToCreateDatabaseDir
             })?;
         }
+
+        // 判断db目录是否正被使用中
+        // 打开或创建文件锁
+        let lock_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dir_path.join(FILE_LOCK_NAME))
+            .map_err(|e| {
+                warn!("Failed to create file lock: {}", e);
+                Errors::FailedToCreateFileLock
+            })?;
+        if lock_file.try_lock_exclusive().is_err() {
+            return Err(Errors::DatabaseIsUsing);
+        }
+
         // 空目录也认为是首次加载
         let entries = std::fs::read_dir(&dir_path).expect("Failed to read database dir");
         if entries.count() == 0 {
@@ -108,6 +131,8 @@ impl Engine {
             merge_lock: Mutex::new(()),
             sequence_number_file_exists: false,
             is_first_load,
+            lock_file,
+            bytes_write: Default::default(),
         };
 
         // B+Tree索引，不需要从数据文件加载索引
@@ -216,6 +241,9 @@ impl Engine {
     }
 
     pub fn close(&self) -> Result<()> {
+        if !self.options.dir_path.is_dir() {
+            return Ok(());
+        }
         // 写入事务序列号
         let sequence_number_file = DataFile::new_sequence_number_file(&self.options.dir_path)?;
         let record = LogRecord {
@@ -230,7 +258,12 @@ impl Engine {
         sequence_number_file.sync()?;
 
         sequence_number_file.write(&record.encode())?;
-        self.active_file.read().sync()
+        self.active_file.read().sync()?;
+        fs2::FileExt::unlock(&self.lock_file).map_err(|e| {
+            warn!("Failed to unlock file lock: {}", e);
+            Errors::FailedToUnlockFileLock
+        })?;
+        Ok(())
     }
 
     /// 将记录追加写到活跃数据文件，返回写入到文件的起始位置
@@ -256,9 +289,23 @@ impl Engine {
         // 写入记录
         let write_offset = active_file.get_write_offset();
         active_file.write(&encoded_record)?;
+
+        let previous = self
+            .bytes_write
+            .fetch_add(record_len, std::sync::atomic::Ordering::SeqCst);
         // 根据配置项，决定是否立刻持久化活跃数据文件
-        if self.options.sync_write {
+        let mut need_sync = self.options.sync_write;
+        if !need_sync
+            && self.options.bytes_per_sync > 0
+            && previous + record_len >= self.options.bytes_per_sync
+        {
+            need_sync = true;
+        }
+        if need_sync {
             active_file.sync()?;
+            // 累计值置为0
+            self.bytes_write
+                .store(0, std::sync::atomic::Ordering::SeqCst);
         }
         // 返回写入位置
         Ok(LogRecordPos {
@@ -471,6 +518,7 @@ mod tests {
             dir_path: std::env::temp_dir().join("test_db_put"),
             data_file_size: 8 * 1024 * 1024,
             sync_write: false,
+            bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
         };
         let engine_dir = engine_opts.dir_path.clone();
@@ -532,6 +580,7 @@ mod tests {
             dir_path: std::env::temp_dir().join("test_db_get"),
             data_file_size: 8 * 1024 * 1024,
             sync_write: false,
+            bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
         };
         let engine_dir = engine_opts.dir_path.clone();
@@ -610,6 +659,7 @@ mod tests {
             dir_path: std::env::temp_dir().join("test_db_delete"),
             data_file_size: 8 * 1024 * 1024,
             sync_write: false,
+            bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
         };
         let engine_dir = engine_opts.dir_path.clone();
@@ -647,6 +697,47 @@ mod tests {
             .expect("Failed to delete data");
         let get_res = engine.get(get_test_key(100));
         assert_eq!(get_res, Err(Errors::KeyNotFound));
+
+        std::fs::remove_dir_all(engine_dir).expect("Failed to remove test directory");
+    }
+
+    #[test]
+    fn test_db_sync() {
+        let engine_opts = Options {
+            dir_path: std::env::temp_dir().join("test_db_sync"),
+            data_file_size: 8 * 1024 * 1024,
+            sync_write: false,
+            bytes_per_sync: 1000000,
+            index_type: IndexType::BTree,
+        };
+        let engine_dir = engine_opts.dir_path.clone();
+
+        let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
+        engine
+            .put(get_test_key(1), get_test_value(1))
+            .expect("Failed to put data");
+        engine.sync().expect("Failed to sync");
+        std::fs::remove_dir_all(engine_dir).expect("Failed to remove test directory");
+    }
+
+    #[test]
+    fn test_db_file_lock() {
+        let engine_opts = Options {
+            dir_path: std::env::temp_dir().join("test_db_file_lock"),
+            data_file_size: 8 * 1024 * 1024,
+            sync_write: false,
+            bytes_per_sync: 100,
+            index_type: IndexType::BTree,
+        };
+        let engine_dir = engine_opts.dir_path.clone();
+
+        let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
+        let engine_res = Engine::open(engine_opts.clone());
+        assert!(engine_res.is_err());
+        // 关闭后，可以重新打开
+        engine.close().expect("Failed to close engine");
+        let engine_res = Engine::open(engine_opts.clone());
+        assert!(engine_res.is_ok());
 
         std::fs::remove_dir_all(engine_dir).expect("Failed to remove test directory");
     }

@@ -167,6 +167,7 @@ mod tests {
             dir_path: std::env::temp_dir().join("test_db_write_batch"),
             data_file_size: 8 * 1024 * 1024,
             sync_write: false,
+            bytes_per_sync: 100,
             index_type: IndexType::BTree,
         };
         let engine_dir = engine_opts.dir_path.clone();
@@ -204,6 +205,7 @@ mod tests {
             dir_path: std::env::temp_dir().join("test_write_batch_reopen"),
             data_file_size: 8 * 1024 * 1024,
             sync_write: false,
+            bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
         };
         let engine_dir = engine_opts.dir_path.clone();
@@ -264,6 +266,7 @@ mod tests {
             dir_path: std::env::temp_dir().join("test_write_batch_shutdown"),
             data_file_size: 8 * 1024 * 1024,
             sync_write: false,
+            bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
         };
         let engine_dir = engine_opts.dir_path.clone();

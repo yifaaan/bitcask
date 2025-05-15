@@ -17,7 +17,7 @@ use crate::{
         },
         log_record::{LogRecord, LogRecordType, decode_log_record_pos},
     },
-    db::Engine,
+    db::{Engine, FILE_LOCK_NAME},
     errors::{Errors, Result},
     options::Options,
 };
@@ -180,11 +180,14 @@ pub(crate) fn load_merge_files(dir_path: &Path) -> Result<()> {
         let file_name = file_name_os.to_str().unwrap();
         if file_name.ends_with(MERGE_FINISHED_FILE_NAME) {
             merge_finished = true;
-        } else if file_name.ends_with(SEQUENCE_NUMBER_FILE_NAME) {
-            continue;
-        } else {
-            merged_file_names.push(file_name_os);
         }
+        if file_name.ends_with(SEQUENCE_NUMBER_FILE_NAME) {
+            continue;
+        }
+        if file_name.ends_with(FILE_LOCK_NAME) {
+            continue;
+        }
+        merged_file_names.push(file_name_os);
     }
 
     // 如果merge未完成，则删除merge目录

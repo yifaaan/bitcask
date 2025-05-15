@@ -65,4 +65,13 @@ pub enum Errors {
 
     #[error("Unable to use write batch")]
     UnableToUseWriteBatch,
+
+    #[error("Failed to create file lock")]
+    FailedToCreateFileLock,
+
+    #[error("Database is using")]
+    DatabaseIsUsing,
+
+    #[error("Failed to unlock file lock")]
+    FailedToUnlockFileLock,
 }
