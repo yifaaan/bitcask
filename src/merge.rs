@@ -19,7 +19,7 @@ use crate::{
     },
     db::{Engine, FILE_LOCK_NAME},
     errors::{Errors, Result},
-    options::Options,
+    options::{IOType, Options},
 };
 
 const MERGE_DIR_SUFFIX: &str = "merge";
@@ -113,15 +113,27 @@ impl Engine {
         active_file.sync()?;
         let active_file_id = active_file.get_file_id();
         // 创建新的活跃数据文件，处理写入,将当前活跃数据文件转化为旧数据文件加入到merge列表
-        let new_active_file = DataFile::new(&self.options.dir_path, active_file_id + 1)?;
+        let new_active_file = DataFile::new(
+            &self.options.dir_path,
+            active_file_id + 1,
+            IOType::StandardFileIO,
+        )?;
         *active_file = new_active_file;
-        let older_file = DataFile::new(&self.options.dir_path, active_file_id)?;
+        let older_file = DataFile::new(
+            &self.options.dir_path,
+            active_file_id,
+            IOType::StandardFileIO,
+        )?;
         self.older_files.write().insert(active_file_id, older_file);
         merge_file_ids.push(active_file_id);
         merge_file_ids.sort();
         let mut merge_files = Vec::new();
         for f_id in merge_file_ids {
-            merge_files.push(DataFile::new(&self.options.dir_path, f_id)?);
+            merge_files.push(DataFile::new(
+                &self.options.dir_path,
+                f_id,
+                IOType::StandardFileIO,
+            )?);
         }
         Ok(merge_files)
     }

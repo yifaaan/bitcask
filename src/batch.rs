@@ -169,6 +169,7 @@ mod tests {
             sync_write: false,
             bytes_per_sync: 100,
             index_type: IndexType::BTree,
+            use_mmap: false,
         };
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
@@ -207,6 +208,7 @@ mod tests {
             sync_write: false,
             bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
+            use_mmap: false,
         };
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");
@@ -268,6 +270,7 @@ mod tests {
             sync_write: false,
             bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
+            use_mmap: true,
         };
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts.clone()).expect("Failed to open engine");

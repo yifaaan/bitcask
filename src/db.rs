@@ -26,7 +26,7 @@ use crate::{
     errors::{Errors, Result},
     index::{Indexer, new_indexer},
     merge::load_merge_files,
-    options::{IndexType, Options},
+    options::{IOType, IndexType, Options},
 };
 
 const INITIAL_DATA_FILE_ID: u32 = 0;
@@ -102,7 +102,7 @@ impl Engine {
         // 加载merge目录,删除已merge的数据文件，将已merge的数据文件移动到当前db
         load_merge_files(&dir_path)?;
 
-        let mut data_files = load_data_files(&dir_path)?;
+        let mut data_files = load_data_files(&dir_path, opts.use_mmap)?;
         // 新数据文件在开头
         data_files.reverse();
         let file_ids: Vec<_> = data_files.iter().map(|f| f.get_file_id()).rev().collect();
@@ -117,7 +117,7 @@ impl Engine {
         // 最后一个是活跃数据文件
         let active_file = match data_files.pop() {
             Some(file) => file,
-            None => DataFile::new(&dir_path, INITIAL_DATA_FILE_ID)?,
+            None => DataFile::new(&dir_path, INITIAL_DATA_FILE_ID, IOType::StandardFileIO)?,
         };
         let idx_type = opts.index_type;
         let mut engine = Self {
@@ -146,6 +146,10 @@ impl Engine {
                 engine
                     .sequence_number
                     .store(seq_number + 1, std::sync::atomic::Ordering::SeqCst); // 更新到下一个事务序列号
+            }
+            // 加载数据文件后，恢复标准文件IO
+            if opts.use_mmap {
+                engine.reset_io_type()?;
             }
         }
 
@@ -278,12 +282,13 @@ impl Engine {
             // 持久化活跃数据文件
             active_file.sync()?;
             let current_file_id = active_file.get_file_id();
-            let old_active_file = DataFile::new(dir_path, current_file_id)?;
+            let old_active_file = DataFile::new(dir_path, current_file_id, IOType::StandardFileIO)?;
             self.older_files
                 .write()
                 .insert(current_file_id, old_active_file);
             // 创建新的活跃数据文件
-            let new_active_file = DataFile::new(dir_path, current_file_id + 1)?;
+            let new_active_file =
+                DataFile::new(dir_path, current_file_id + 1, IOType::StandardFileIO)?;
             *active_file = new_active_file;
         }
         // 写入记录
@@ -455,6 +460,17 @@ impl Engine {
         std::fs::remove_file(file_name).unwrap();
         (true, seq_number)
     }
+
+    /// 重置io管理器类型为标准文件io
+    fn reset_io_type(&self) -> Result<()> {
+        let mut active_file = self.active_file.write();
+        active_file.set_io_manager(&self.options.dir_path, IOType::StandardFileIO)?;
+        let mut older_files = self.older_files.write();
+        for (_, file) in older_files.iter_mut() {
+            file.set_io_manager(&self.options.dir_path, IOType::StandardFileIO)?;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for Engine {
@@ -476,7 +492,7 @@ fn check_options(opts: &Options) -> Result<()> {
     Ok(())
 }
 
-fn load_data_files(dir_path: &Path) -> Result<Vec<DataFile>> {
+fn load_data_files(dir_path: &Path, use_mmap: bool) -> Result<Vec<DataFile>> {
     let d_entries = std::fs::read_dir(dir_path).map_err(|_| Errors::FailedToReadDatabaseDir)?;
     let mut file_ids = Vec::new();
     let mut data_files = Vec::new();
@@ -498,7 +514,11 @@ fn load_data_files(dir_path: &Path) -> Result<Vec<DataFile>> {
 
     // 打开数据文件
     for file_id in &file_ids {
-        let data_file = DataFile::new(dir_path, *file_id)?;
+        let mut io_type = IOType::StandardFileIO;
+        if use_mmap {
+            io_type = IOType::MmapIO;
+        }
+        let data_file = DataFile::new(dir_path, *file_id, io_type)?;
         data_files.push(data_file);
     }
     Ok(data_files)
@@ -520,6 +540,7 @@ mod tests {
             sync_write: false,
             bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
+            use_mmap: false,
         };
         let engine_dir = engine_opts.dir_path.clone();
 
@@ -582,6 +603,7 @@ mod tests {
             sync_write: false,
             bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
+            use_mmap: false,
         };
         let engine_dir = engine_opts.dir_path.clone();
 
@@ -661,6 +683,7 @@ mod tests {
             sync_write: false,
             bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
+            use_mmap: false,
         };
         let engine_dir = engine_opts.dir_path.clone();
 
@@ -709,6 +732,7 @@ mod tests {
             sync_write: false,
             bytes_per_sync: 1000000,
             index_type: IndexType::BTree,
+            use_mmap: true,
         };
         let engine_dir = engine_opts.dir_path.clone();
 
@@ -728,6 +752,7 @@ mod tests {
             sync_write: false,
             bytes_per_sync: 100,
             index_type: IndexType::BTree,
+            use_mmap: false,
         };
         let engine_dir = engine_opts.dir_path.clone();
 

@@ -82,6 +82,7 @@ mod tests {
             sync_write: true,
             bytes_per_sync: 100,
             index_type: IndexType::BTree,
+            use_mmap: true,
         };
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts).expect("Failed to open engine");
@@ -171,6 +172,7 @@ mod tests {
             sync_write: true,
             bytes_per_sync: 100,
             index_type: IndexType::BTree,
+            use_mmap: true,
         };
         let engine_dir = engine_opts.dir_path.clone();
         let engine = Engine::open(engine_opts).expect("Failed to open engine");
@@ -231,6 +233,7 @@ mod tests {
             sync_write: true,
             bytes_per_sync: 100,
             index_type: IndexType::BTree,
+            use_mmap: true,
         };
         engine_opts.dir_path = std::env::temp_dir().join("test_iterator_reverse");
 
@@ -294,6 +297,7 @@ mod tests {
             sync_write: true,
             bytes_per_sync: 100,
             index_type: IndexType::BTree,
+            use_mmap: true,
         };
         engine_opts.dir_path = std::env::temp_dir().join("test_iterator_list_keys");
 
@@ -323,6 +327,7 @@ mod tests {
             sync_write: true,
             bytes_per_sync: 100,
             index_type: IndexType::BTree,
+            use_mmap: true,
         };
         engine_opts.dir_path = std::env::temp_dir().join("test_iterator_fold");
 

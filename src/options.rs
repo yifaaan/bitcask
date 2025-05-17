@@ -17,6 +17,8 @@ pub struct Options {
     pub(crate) bytes_per_sync: usize,
     /// 索引类型
     pub(crate) index_type: IndexType,
+    /// 是否使用mmap打开数据文件
+    pub(crate) use_mmap: bool,
 }
 
 impl Default for Options {
@@ -27,6 +29,7 @@ impl Default for Options {
             sync_write: false,
             bytes_per_sync: 0,
             index_type: IndexType::BPlusTree,
+            use_mmap: true,
         }
     }
 }
@@ -63,4 +66,10 @@ impl Default for WriteBatchOptions {
             sync_write: false,
         }
     }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum IOType {
+    StandardFileIO,
+    MmapIO,
 }
