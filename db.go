@@ -127,6 +127,33 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	return logRecord.Value, nil
 }
 
+// 删除key对应的value
+func (db *DB) Delete(key []byte) error {
+	// 判断key有效性
+	if len(key) == 0 {
+		return ErrKeyIsEmpty
+	}
+	// 检查内存索引key是否存在,不存在之间返回就行
+	if pos := db.index.Get(key); pos == nil {
+		return nil
+	}
+
+	// 构造一条删除记录
+	logRecord := &data.LogRecord{Key: key, Type: data.LogRecordDelete}
+	// 写入到数据文件
+	_, err := db.appendLogRecord(logRecord)
+	if err != nil {
+		return err
+	}
+
+	// 从内存索引中删除key
+	ok := db.index.Delete(key)
+	if !ok {
+		return ErrIndexUpdataFailed
+	}
+	return nil
+}
+
 // 向当前活跃数据文件追加写入一条记录
 func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, error) {
 	db.mu.Lock()
