@@ -1,6 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 func modMap(m map[int]string) {
 	m[2] = "hello"
@@ -17,12 +20,44 @@ func modSlice(s []int) {
 	fmt.Println(s, len(s), cap(s))
 }
 
-func main() {
-	m := map[int]string{1: "first", 2: "second"}
-	modMap(m)
-	fmt.Println(m) // map[2:hello 3:goodbye]
+func dumpMethodSet(i interface{}) {
+	dynType := reflect.TypeOf(i)
+	if dynType == nil {
+		fmt.Println("There is no  dynamic type")
+		return
+	}
+	n := dynType.NumMethod()
+	if n == 0 {
+		fmt.Printf("%s's method set is empty!\n", dynType)
+		return
+	}
+	fmt.Printf("%s's method set:\n", dynType)
+	for j := 0; j < n; j++ {
+		fmt.Printf("-%s\n", dynType.Method(j).Name)
+	}
+	fmt.Println()
+}
 
-	s := []int{1, 2, 3}
-	modSlice(s)
-	fmt.Println(s) // [2 4 6]
+type T struct{}
+
+func (T) M1()  {}
+func (T) M2()  {}
+func (*T) M3() {}
+func (*T) M4() {}
+
+type S T
+
+func main() {
+
+	var n int
+	dumpMethodSet(n)
+	dumpMethodSet(&n)
+
+	var t T
+	dumpMethodSet(t)
+	dumpMethodSet(&t)
+
+	var s S
+	dumpMethodSet(s)
+	dumpMethodSet(&s)
 }
