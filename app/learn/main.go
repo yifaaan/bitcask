@@ -5,19 +5,35 @@ import (
 	"reflect"
 )
 
-func modMap(m map[int]string) {
-	m[2] = "hello"
-	m[3] = "goodbye"
-	delete(m, 1)
+type E1 struct {
 }
 
-func modSlice(s []int) {
-	for k, v := range s {
-		s[k] = v * 2
-	}
-	fmt.Println(s, len(s), cap(s))
-	s = append(s, 10) // 仅修改了内部副本的长度
-	fmt.Println(s, len(s), cap(s))
+func (E1) M1() {
+
+}
+func (E1) M2() {
+
+}
+func (E1) M3() {
+
+}
+
+type E2 struct {
+}
+
+func (E2) M1() {
+
+}
+func (E2) M2() {
+
+}
+func (E1) M4() {
+
+}
+
+type T struct {
+	E1
+	E2
 }
 
 func dumpMethodSet(i interface{}) {
@@ -38,26 +54,9 @@ func dumpMethodSet(i interface{}) {
 	fmt.Println()
 }
 
-type T struct{}
-
-func (T) M1()  {}
-func (T) M2()  {}
-func (*T) M3() {}
-func (*T) M4() {}
-
-type S T
-
 func main() {
 
-	var n int
-	dumpMethodSet(n)
-	dumpMethodSet(&n)
-
-	var t T
-	dumpMethodSet(t)
-	dumpMethodSet(&t)
-
-	var s S
-	dumpMethodSet(s)
-	dumpMethodSet(&s)
+	t := T{}
+	t.E1.M1()
+	t.E2.M2()
 }

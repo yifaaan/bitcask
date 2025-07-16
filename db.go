@@ -1,6 +1,11 @@
 package bitcask
 
 import (
+	"errors"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/yifaaan/bitcask/data"
@@ -17,6 +22,34 @@ type DB struct {
 	olderFiles map[uint32]*data.DataFile
 	// 内存索引
 	index index.Indexer
+}
+
+// 打开存储引擎实例
+func Open(options Options) (*DB, error) {
+	// 检验配置
+	if err := checkOptions(options); err != nil {
+		return nil, err
+	}
+
+	// 判断数据目录是否存在，不存在需要创建
+	if _, err := os.Stat(options.DirPath); os.IsNotExist(err) {
+		if err := os.MkdirAll(options.DirPath, os.ModePerm); err != nil {
+			return nil, err
+		}
+	}
+
+	// 初始化DB结构
+	db := &DB{
+		options:    options,
+		mu:         &sync.RWMutex{},
+		olderFiles: make(map[uint32]*data.DataFile),
+		index:      index.NewIndexer(options.IndexType),
+	}
+
+	// 加载数据文件
+	if err := db.loadDataFiles(); err != nil {
+		return nil, err
+	}
 }
 
 // 写入key/value数据，key不能为空
@@ -143,5 +176,55 @@ func (db *DB) setActiveDataFile() error {
 		return err
 	}
 	db.activeFile = dataFile
+	return nil
+}
+
+// 从磁盘加载数据文件
+func (db *DB) loadDataFiles() error {
+	// 读取目录
+	dirEntries, err := os.ReadDir(db.options.DirPath)
+	if err != nil {
+		return err
+	}
+
+	var fileIds []int
+	// 找到所有以.data结尾的数据文件
+	for _, entry := range dirEntries {
+		if strings.HasSuffix(entry.Name(), data.DataFileNameSuffix) {
+			splitName := strings.Split(entry.Name(), ".")
+			fileId, err := strconv.Atoi(splitName[0])
+			if err != nil {
+				return ErrDataDirectoryCorrupted
+			}
+			fileIds = append(fileIds, fileId)
+		}
+	}
+
+	// 对文件id排序，从小到大依次加载数据文件
+	sort.Ints(fileIds)
+
+	// 遍历打开每个数据文件
+	for i, fid := range fileIds {
+		dataFile, err := data.OpenDataFile(db.options.DirPath, uint32(fid))
+		if err != nil {
+			return err
+		}
+		// 如果是活跃数据文件
+		if i == len(fileIds)-1 {
+			db.activeFile = dataFile
+		} else {
+			db.olderFiles[uint32(fid)] = dataFile
+		}
+	}
+	return nil
+}
+
+func checkOptions(options Options) error {
+	if options.DirPath == "" {
+		return errors.New("database dir path is empty")
+	}
+	if options.DataFileSize <= 0 {
+		return errors.New("database data file size must be greater than 0")
+	}
 	return nil
 }

@@ -2,6 +2,8 @@ package data
 
 import "github.com/yifaaan/bitcask/fio"
 
+const DataFileNameSuffix = ".data"
+
 // 数据文件结构体
 type DataFile struct {
 	FileId uint32
