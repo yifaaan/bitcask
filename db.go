@@ -288,10 +288,14 @@ func (db *DB) loadIndexFromDataFiles() error {
 			// 构建一条索引
 			logRecordPos := &data.LogRecordPos{Fid: fileId, Offset: offset}
 			// 如果记录是删除的，从index删除即可
+			var ok bool
 			if logRecord.Type == data.LogRecordDelete {
-				db.index.Delete(logRecord.Key)
+				ok = db.index.Delete(logRecord.Key)
 			} else {
-				db.index.Put(logRecord.Key, logRecordPos)
+				ok = db.index.Put(logRecord.Key, logRecordPos)
+			}
+			if !ok {
+				return ErrIndexUpdataFailed
 			}
 			// 更新下一个记录的读取位置
 			offset += size

@@ -1,10 +1,16 @@
 package data
 
+import "errors"
+
 type LogRecordType = byte
 
 const (
 	LogRecordNormal LogRecordType = iota
 	LogRecordDelete
+)
+
+var (
+	ErrInvalidCRC = errors.New("invalid log record crc")
 )
 
 // 数据内存索引，描述数据在磁盘上的位置
@@ -22,7 +28,20 @@ type LogRecord struct {
 	Type  LogRecordType
 }
 
+// 日志记录头
+type logRecordHeader struct {
+	crc        uint32
+	recordType LogRecordType
+	keySize    uint32
+	valueSize  uint32
+}
+
 // 将记录编码成字节数组
 func EncodeLogRecord(record *LogRecord) ([]byte, int64) {
+	return nil, 0
+}
+
+// 将字节数组解码成日志记录头,返回日志记录头和它在字节数组中的大小
+func decodeLogRecordHeader(buf []byte) (*logRecordHeader, int64) {
 	return nil, 0
 }
