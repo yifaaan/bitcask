@@ -50,6 +50,7 @@ func Open(options Options) (*DB, error) {
 	if err := db.loadDataFiles(); err != nil {
 		return nil, err
 	}
+	return db, nil
 }
 
 // 写入key/value数据，key不能为空
