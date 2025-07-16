@@ -46,6 +46,44 @@ func (db *DB) Put(key, value []byte) error {
 	return nil
 }
 
+// 根据key读value
+func (db *DB) Get(key []byte) ([]byte, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	if len(key) == 0 {
+		return nil, ErrKeyIsEmpty
+	}
+
+	// 从内存索引获取索引信息
+	pos := db.index.Get(key)
+	if pos == nil {
+		return nil, ErrKeyNotFound
+	}
+
+	// 根据文件id找到数据文件
+	var dataFile *data.DataFile
+	if db.activeFile.FileId == pos.Fid {
+		dataFile = db.activeFile
+	} else {
+		dataFile = db.olderFiles[pos.Fid]
+	}
+	if dataFile == nil {
+		return nil, ErrDataFileNotFound
+	}
+
+	// 根据偏移读取数据
+	logRecord, err := dataFile.ReadLogRecord(pos.Offset)
+	if err != nil {
+		return nil, err
+	}
+	// 数据已经被删除
+	if logRecord.Type == data.LogRecordDelete {
+		return nil, ErrKeyNotFound
+	}
+	return logRecord.Value, nil
+}
+
 // 向当前活跃数据文件追加写入一条记录
 func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, error) {
 	db.mu.Lock()
