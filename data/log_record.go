@@ -68,7 +68,7 @@ func EncodeLogRecord(record *LogRecord) ([]byte, int64) {
 	// 计算crc
 	crc := crc32.ChecksumIEEE(encBytes[4:])
 	binary.LittleEndian.PutUint32(encBytes[:4], crc)
-	println("header length: ", idx, "crc: ", crc)
+	// println("header length: ", idx, "crc: ", crc)
 	return encBytes, int64(size)
 }
 
