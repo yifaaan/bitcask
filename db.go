@@ -2,6 +2,7 @@ package bitcask
 
 import (
 	"errors"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -22,6 +23,8 @@ type DB struct {
 	olderFiles map[uint32]*data.DataFile
 	// 内存索引
 	index index.Indexer
+	// 只用于加载索引时
+	fileIds []int
 }
 
 // 打开存储引擎实例
@@ -50,6 +53,12 @@ func Open(options Options) (*DB, error) {
 	if err := db.loadDataFiles(); err != nil {
 		return nil, err
 	}
+
+	// 根据数据文件构造内存索引
+	if err := db.loadIndexFromDataFiles(); err != nil {
+		return nil, err
+	}
+
 	return db, nil
 }
 
@@ -107,7 +116,7 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 	}
 
 	// 根据偏移读取数据
-	logRecord, err := dataFile.ReadLogRecord(pos.Offset)
+	logRecord, _, err := dataFile.ReadLogRecord(pos.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +212,7 @@ func (db *DB) loadDataFiles() error {
 
 	// 对文件id排序，从小到大依次加载数据文件
 	sort.Ints(fileIds)
+	db.fileIds = fileIds
 
 	// 遍历打开每个数据文件
 	for i, fid := range fileIds {
@@ -215,6 +225,54 @@ func (db *DB) loadDataFiles() error {
 			db.activeFile = dataFile
 		} else {
 			db.olderFiles[uint32(fid)] = dataFile
+		}
+	}
+	return nil
+}
+
+// 从数据文件加载索引
+func (db *DB) loadIndexFromDataFiles() error {
+	// 空数据库
+	if len(db.fileIds) == 0 {
+		return nil
+	}
+
+	for i, fid := range db.fileIds {
+		fileId := uint32(fid)
+		var dataFile *data.DataFile
+		if fileId == db.activeFile.FileId {
+			dataFile = db.activeFile
+		} else {
+			dataFile = db.olderFiles[fileId]
+		}
+
+		// 处理每一个数据文件
+		var offset int64
+		for {
+			// 读取一条数据记录
+			logRecord, size, err := dataFile.ReadLogRecord(offset)
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return err
+			}
+
+			// 构建一条索引
+			logRecordPos := &data.LogRecordPos{Fid: fileId, Offset: offset}
+			// 如果记录是删除的，从index删除即可
+			if logRecord.Type == data.LogRecordDelete {
+				db.index.Delete(logRecord.Key)
+			} else {
+				db.index.Put(logRecord.Key, logRecordPos)
+			}
+			// 更新下一个记录的读取位置
+			offset += size
+		}
+
+		// 如果是当前活跃数据文件，需要更新这个文件的写偏移
+		if i == len(db.fileIds)-1 {
+			db.activeFile.WriteOff = offset
 		}
 	}
 	return nil

@@ -18,9 +18,9 @@ func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
 	return nil, nil
 }
 
-// 根据偏移读取一条记录
-func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, error) {
-	return nil, nil
+// 根据偏移读取一条记录,返回记录和它在文件中的大小
+func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, int64, error) {
+	return nil, 0, nil
 }
 
 func (df *DataFile) Write(b []byte) error {
