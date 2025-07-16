@@ -1,5 +1,3 @@
-![](https://github.com/tyrchen/rust-lib-template/workflows/build/badge.svg)
-
 # bitcask
 
 TODO
