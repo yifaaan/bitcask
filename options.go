@@ -27,3 +27,12 @@ var DefaultOptions = Options{
 	SyncWrites:   false,
 	IndexType:    BTree,
 }
+
+type IteratorOptions struct {
+	// 遍历指定前缀的key，默认为空
+	Prefix []byte
+	// 是否反向
+	Reverse bool
+}
+
+var DefaultIteratorOptions = IteratorOptions{Prefix: nil, Reverse: false}

@@ -104,6 +104,11 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, ErrKeyNotFound
 	}
 
+	return db.getValueByPosition(pos)
+}
+
+// 根据位置信息获取对应的 value
+func (db *DB) getValueByPosition(pos *data.LogRecordPos) ([]byte, error) {
 	// 根据文件id找到数据文件
 	var dataFile *data.DataFile
 	if db.activeFile.FileId == pos.Fid {
@@ -150,6 +155,88 @@ func (db *DB) Delete(key []byte) error {
 	ok := db.index.Delete(key)
 	if !ok {
 		return ErrIndexUpdataFailed
+	}
+	return nil
+}
+
+// 关闭数据库
+func (db *DB) Close() error {
+	if db.activeFile == nil {
+		return nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// 关闭索引
+	if err := db.index.Close(); err != nil {
+		return err
+	}
+
+	// 关闭活跃数据文件
+	if err := db.activeFile.Close(); err != nil {
+		return err
+	}
+
+	// 关闭旧数据文件
+	for _, file := range db.olderFiles {
+		if err := file.Close(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// 持久化
+func (db *DB) Sync() error {
+	if db.activeFile == nil {
+		return nil
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	// 关闭索引
+	if err := db.index.Close(); err != nil {
+		return err
+	}
+
+	// 关闭活跃数据文件
+	if err := db.activeFile.Sync(); err != nil {
+		return err
+	}
+
+	// 关闭旧数据文件
+	for _, file := range db.olderFiles {
+		if err := file.Sync(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// 获取所有的key
+func (db *DB) ListKeys() [][]byte {
+	iterator := db.index.Iterator(false)
+	keys := make([][]byte, 0, db.index.Size())
+	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
+		keys = append(keys, iterator.Key())
+	}
+	return keys
+}
+
+// 对所有数据执行指定操作，函数返回false时退出
+func (db *DB) Fold(f func(key, value []byte) bool) error {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	iterator := db.index.Iterator(false)
+	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
+		value, err := db.getValueByPosition(iterator.Value())
+		if err != nil {
+			return nil
+		}
+		if !f(iterator.Key(), value) {
+			break
+		}
 	}
 	return nil
 }
