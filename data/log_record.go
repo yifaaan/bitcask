@@ -11,6 +11,7 @@ type LogRecordType = byte
 const (
 	LogRecordNormal LogRecordType = iota
 	LogRecordDelete
+	LogRecordTxnFinished
 )
 
 var (
@@ -30,6 +31,11 @@ type LogRecord struct {
 	Key   []byte
 	Value []byte
 	Type  LogRecordType
+}
+
+type TransactionRecord struct {
+	Record *LogRecord
+	Pos    *LogRecordPos
 }
 
 // 日志记录头

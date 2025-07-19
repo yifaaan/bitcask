@@ -36,3 +36,9 @@ type IteratorOptions struct {
 }
 
 var DefaultIteratorOptions = IteratorOptions{Prefix: nil, Reverse: false}
+
+type WriteBatchOptions struct {
+	// 一个batch的最大数据量
+	MaxBatchNum uint
+	SyncWrites  bool
+}
