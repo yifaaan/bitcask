@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	DataFileNameSuffix = ".data"
-
+	DataFileNameSuffix    = ".data"
+	HintFileName          = "hint"
+	MergeFinishedFileName = "merge-finished"
 	// crc:4, type:1, keySize: 5, valueSize: 5
 	maxLogRecordHeaderSize = 4 + 1 + 2*binary.MaxVarintLen32
 )
@@ -29,6 +30,22 @@ type DataFile struct {
 // 打开新的数据文件
 func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
 	fileName := filepath.Join(dirPath, fmt.Sprintf("%09d%s", fileId, DataFileNameSuffix))
+	return newDataFile(fileName, fileId)
+}
+
+// 打开hint索引文件
+func OpenHintFile(dirPath string) (*DataFile, error) {
+	fileName := filepath.Join(dirPath, HintFileName)
+	return newDataFile(fileName, 0)
+}
+
+// 打开标识merge完成的文件
+func OpenMergeFinishedFile(dirPath string) (*DataFile, error) {
+	fileName := filepath.Join(dirPath, MergeFinishedFileName)
+	return newDataFile(fileName, 0)
+}
+
+func newDataFile(fileName string, fileId uint32) (*DataFile, error) {
 	iomanager, err := fio.NewFileIOManager(fileName)
 	if err != nil {
 		return nil, err
@@ -80,6 +97,12 @@ func (df *DataFile) ReadLogRecord(offset int64) (*LogRecord, int64, error) {
 		return nil, 0, ErrInvalidCRC
 	}
 	return logRecord, recordSize, nil
+}
+
+func (df *DataFile) WriteHintRecord(key []byte, pos *LogRecordPos) error {
+	record := &LogRecord{Key: key, Value: EncodeLogRecordPos(pos)}
+	encRecord, _ := EncodeLogRecord(record)
+	return df.Write(encRecord)
 }
 
 func (df *DataFile) Write(b []byte) error {
