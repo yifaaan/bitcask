@@ -31,14 +31,19 @@ const (
 
 	// 自适应基数树
 	ART
+
+	// B+树
+	BplusTree
 )
 
-func NewIndexer(t IndexType) Indexer {
+func NewIndexer(t IndexType, dirPath string) Indexer {
 	switch t {
 	case Btree:
 		return NewBTree()
 	case ART:
 		return NewAdaptiveRadixTree()
+	case BplusTree:
+		return NewBPlusTree(dirPath)
 	default:
 		panic("unsupported index type")
 	}
