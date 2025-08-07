@@ -4,6 +4,7 @@ import (
 	"bytes"
 
 	"github.com/google/btree"
+	art "github.com/plar/go-adaptive-radix-tree"
 	"github.com/yifaaan/bitcask/data"
 )
 
@@ -37,8 +38,7 @@ func NewIndexer(t IndexType) Indexer {
 	case Btree:
 		return NewBTree()
 	case ART:
-		// todo
-		return nil
+		return NewAdaptiveRadixTree()
 	default:
 		panic("unsupported index type")
 	}
@@ -53,6 +53,10 @@ type Item struct {
 // 为*Item实现btree.Item接口
 func (i *Item) Less(than btree.Item) bool {
 	return bytes.Compare(i.key, than.(*Item).key) == -1
+}
+
+func (i *Item) Key() art.Key {
+	return i.key
 }
 
 // 索引迭代器接口
