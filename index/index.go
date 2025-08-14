@@ -36,14 +36,14 @@ const (
 	BplusTree
 )
 
-func NewIndexer(t IndexType, dirPath string) Indexer {
+func NewIndexer(t IndexType, dirPath string, syncWrites bool) Indexer {
 	switch t {
 	case Btree:
 		return NewBTree()
 	case ART:
 		return NewAdaptiveRadixTree()
 	case BplusTree:
-		return NewBPlusTree(dirPath)
+		return NewBPlusTree(dirPath, syncWrites)
 	default:
 		panic("unsupported index type")
 	}

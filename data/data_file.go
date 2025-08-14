@@ -14,6 +14,7 @@ const (
 	DataFileNameSuffix    = ".data"
 	HintFileName          = "hint"
 	MergeFinishedFileName = "merge-finished"
+	SeqNoFileName         = "seq-no"
 	// crc:4, type:1, keySize: 5, valueSize: 5
 	maxLogRecordHeaderSize = 4 + 1 + 2*binary.MaxVarintLen32
 )
@@ -42,6 +43,12 @@ func OpenHintFile(dirPath string) (*DataFile, error) {
 // 打开标识merge完成的文件
 func OpenMergeFinishedFile(dirPath string) (*DataFile, error) {
 	fileName := filepath.Join(dirPath, MergeFinishedFileName)
+	return newDataFile(fileName, 0)
+}
+
+// 打开标事务序列号的文件
+func OpenSeqNoFile(dirPath string) (*DataFile, error) {
+	fileName := filepath.Join(dirPath, SeqNoFileName)
 	return newDataFile(fileName, 0)
 }
 

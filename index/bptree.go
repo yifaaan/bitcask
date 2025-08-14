@@ -17,8 +17,10 @@ type BPlusTree struct {
 }
 
 // 创建B+树索引
-func NewBPlusTree(dirPath string) *BPlusTree {
-	bptree, err := bbolt.Open(filepath.Join(dirPath, bptreeIndexFileName), 0644, nil)
+func NewBPlusTree(dirPath string, syncWrites bool) *BPlusTree {
+	opts := bbolt.DefaultOptions
+	opts.NoSync = !syncWrites
+	bptree, err := bbolt.Open(filepath.Join(dirPath, bptreeIndexFileName), 0644, opts)
 	if err != nil {
 		panic(err)
 	}
@@ -95,6 +97,7 @@ func (bpt *BPlusTree) Size() int {
 	return size
 }
 
+// B+Tree 迭代器（原实现：基于只读事务与游标）
 type bptreeIterator struct {
 	tx        *bbolt.Tx
 	cursor    *bbolt.Cursor
@@ -147,5 +150,5 @@ func (bpti *bptreeIterator) Value() *data.LogRecordPos {
 }
 
 func (bpti *bptreeIterator) Close() {
-	_ = bpti.tx.Commit()
+	_ = bpti.tx.Rollback()
 }

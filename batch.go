@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 
 	"github.com/yifaaan/bitcask/data"
+	"github.com/yifaaan/bitcask/index"
 )
 
 // 非事务的记录，seqNo为0
@@ -22,6 +23,9 @@ type WriteBatch struct {
 }
 
 func (db *DB) NewWriteBatch(opts WriteBatchOptions) *WriteBatch {
+	if db.options.IndexType == index.BplusTree && !db.seqNoFileExists && !db.isInitial {
+		panic("can not use write batch, seqNo file not exists")
+	}
 	return &WriteBatch{
 		mu:            &sync.Mutex{},
 		db:            db,

@@ -154,7 +154,7 @@ func (db *DB) getMergePath() string {
 // 加载merge目录
 func (db *DB) loadMergeFiles() error {
 	mergePath := db.getMergePath()
-	if _, err := os.Stat(mergePath); err == nil {
+	if _, err := os.Stat(mergePath); os.IsNotExist(err) {
 		return nil
 	}
 	defer func() {
@@ -172,6 +172,9 @@ func (db *DB) loadMergeFiles() error {
 	for _, entry := range dirEntries {
 		if entry.Name() == data.MergeFinishedFileName {
 			mergeFinished = true
+			continue
+		}
+		if entry.Name() == data.SeqNoFileName {
 			continue
 		}
 		mergeFileNames = append(mergeFileNames, entry.Name())

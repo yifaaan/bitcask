@@ -19,13 +19,14 @@ type IndexerType = int8
 const (
 	BTree IndexerType = iota + 1
 	ART
+	BPlusTree
 )
 
 var DefaultOptions = Options{
 	DirPath:      os.TempDir(),
 	DataFileSize: 256 * 1024 * 1024,
 	SyncWrites:   false,
-	IndexType:    BTree,
+	IndexType:    BPlusTree,
 }
 
 type IteratorOptions struct {
