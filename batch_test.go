@@ -13,7 +13,8 @@ func TestDB_WriteBatch1(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "bitcask-test-write-batch1")
 	defer os.RemoveAll(dir)
 	opts.DirPath = dir
-	opts.DataFileSize = 64 * 1024 * 1024
+	opts.DataFileSize = 4 * 1024
+	opts.IndexType = BTree
 	db, err := Open(opts)
 	defer destroyDB(db)
 	assert.Nil(t, err)
@@ -27,10 +28,18 @@ func TestDB_WriteBatch1(t *testing.T) {
 	err = wb.Delete(utils.GetTestKey(2))
 	assert.Nil(t, err)
 
+	// 尚未提交前不可见
 	val, err := db.Get(utils.GetTestKey(1))
 	assert.Equal(t, ErrKeyNotFound, err)
 	assert.Nil(t, val)
 
+	// 提交后可见
+	err = wb.Commit()
+	assert.Nil(t, err)
+
+	val, err = db.Get(utils.GetTestKey(1))
+	assert.Nil(t, err)
+	assert.NotNil(t, val)
 }
 
 func TestDB_WriteBatch2(t *testing.T) {
@@ -38,7 +47,8 @@ func TestDB_WriteBatch2(t *testing.T) {
 	dir, _ := os.MkdirTemp("", "bitcask-test-write-batch2")
 	defer os.RemoveAll(dir)
 	opts.DirPath = dir
-	opts.DataFileSize = 64 * 1024 * 1024
+	opts.DataFileSize = 4 * 1024
+	opts.IndexType = BTree
 	db, err := Open(opts)
 	defer destroyDB(db)
 	assert.Nil(t, err)

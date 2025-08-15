@@ -10,11 +10,15 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/gofrs/flock"
 	"github.com/yifaaan/bitcask/data"
 	"github.com/yifaaan/bitcask/index"
 )
 
-const seqNoKey = "seq-no"
+const (
+	seqNoKey     = "seq-no"
+	fileLockName = "flock"
+)
 
 // 存储引擎实例
 type DB struct {
@@ -36,6 +40,8 @@ type DB struct {
 	seqNoFileExists bool
 	// 是否是第一次打开数据库
 	isInitial bool
+	// 文件锁
+	fileLock *flock.Flock
 }
 
 // 打开存储引擎实例
@@ -53,12 +59,22 @@ func Open(options Options) (*DB, error) {
 			return nil, err
 		}
 	}
+
 	entries, err := os.ReadDir(options.DirPath)
 	if err != nil {
 		return nil, err
 	}
 	if len(entries) == 0 {
 		isInitial = true
+	}
+
+	fileLock := flock.New(filepath.Join(options.DirPath, fileLockName))
+	hold, err := fileLock.TryLock()
+	if err != nil {
+		return nil, err
+	}
+	if !hold {
+		return nil, ErrDatabaseIsInUsing
 	}
 
 	// 初始化DB结构
@@ -68,6 +84,7 @@ func Open(options Options) (*DB, error) {
 		olderFiles: make(map[uint32]*data.DataFile),
 		index:      index.NewIndexer(options.IndexType, options.DirPath, options.SyncWrites),
 		isInitial:  isInitial,
+		fileLock:   fileLock,
 	}
 
 	// 加载merge数据目录
@@ -205,6 +222,12 @@ func (db *DB) Delete(key []byte) error {
 
 // 关闭数据库
 func (db *DB) Close() error {
+	defer func() {
+		if err := db.fileLock.Unlock(); err != nil {
+			panic(err)
+		}
+	}()
+
 	if db.activeFile == nil {
 		return nil
 	}
@@ -278,6 +301,7 @@ func (db *DB) Sync() error {
 // 获取所有的key
 func (db *DB) ListKeys() [][]byte {
 	iterator := db.index.Iterator(false)
+	defer iterator.Close()
 	keys := make([][]byte, 0, db.index.Size())
 	for iterator.Rewind(); iterator.Valid(); iterator.Next() {
 		keys = append(keys, iterator.Key())

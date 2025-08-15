@@ -10,4 +10,5 @@ var (
 	ErrDataDirectoryCorrupted = errors.New("the database directory maybe corrupted")
 	ErrExceedMaxBatchNum      = errors.New("the number of pending writes exceeds the maximum number")
 	ErrMergeIsRunning         = errors.New("the merge is running")
+	ErrDatabaseIsInUsing      = errors.New("the database is in using")
 )

@@ -38,7 +38,8 @@ func TestDB_Put(t *testing.T) {
 	// t.Log("dir: ", dir)
 	defer os.RemoveAll(dir)
 	ops.DirPath = dir
-	ops.DataFileSize = 64 * 1024 * 1024
+	ops.DataFileSize = 4 * 1024
+	ops.IndexType = BTree
 	db, err := Open(ops)
 	defer destroyDB(db)
 	assert.Nil(t, err)
@@ -72,7 +73,7 @@ func TestDB_Put(t *testing.T) {
 	assert.Nil(t, err)
 
 	// 5.写到数据文件进行了转换
-	for i := 0; i < 1000000; i++ {
+	for i := 0; len(db.olderFiles) < 2; i++ {
 		err := db.Put(utils.GetTestKey(i), utils.RandomValue(128))
 		assert.Nil(t, err)
 	}
@@ -102,7 +103,8 @@ func TestDB_Get(t *testing.T) {
 	// t.Log("dir: ", dir)
 	defer os.RemoveAll(dir)
 	ops.DirPath = dir
-	ops.DataFileSize = 64 * 1024 * 1024
+	ops.DataFileSize = 4 * 1024
+	ops.IndexType = BTree
 	db, err := Open(ops)
 	defer destroyDB(db)
 	assert.Nil(t, err)
@@ -139,7 +141,7 @@ func TestDB_Get(t *testing.T) {
 	assert.Equal(t, ErrKeyNotFound, err)
 
 	// 5.转换为了旧的数据文件，从旧的数据文件上获取 value
-	for i := 100; i < 1000000; i++ {
+	for i := 100; len(db.olderFiles) < 2; i++ {
 		err := db.Put(utils.GetTestKey(i), utils.RandomValue(128))
 		assert.Nil(t, err)
 	}
@@ -283,4 +285,19 @@ func TestDB_Fold(t *testing.T) {
 		return !bytes.Equal(key, utils.GetTestKey(153))
 	})
 	assert.Nil(t, err)
+}
+
+func TestDB_FileLock(t *testing.T) {
+	opts := DefaultOptions
+	dir, _ := os.MkdirTemp("", "bitcask-test-FileLock")
+	defer os.RemoveAll(dir)
+	opts.DirPath = dir
+	opts.DataFileSize = 64 * 1024 * 1024
+	db, err := Open(opts)
+	defer destroyDB(db)
+	assert.Nil(t, err)
+	assert.NotNil(t, db)
+
+	_, err = Open(opts)
+	assert.Equal(t, ErrDatabaseIsInUsing, err)
 }
