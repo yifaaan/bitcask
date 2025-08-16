@@ -12,6 +12,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/yifaaan/bitcask/data"
+	"github.com/yifaaan/bitcask/fio"
 	"github.com/yifaaan/bitcask/index"
 )
 
@@ -42,6 +43,8 @@ type DB struct {
 	isInitial bool
 	// 文件锁
 	fileLock *flock.Flock
+	// 已经写入的字节数
+	bytesWritten uint
 }
 
 // 打开存储引擎实例
@@ -106,6 +109,11 @@ func Open(options Options) (*DB, error) {
 		// 根据数据文件构造内存索引
 		if err := db.loadIndexFromDataFiles(); err != nil {
 			return nil, err
+		}
+		if db.options.MMapAtStart {
+			if err := db.resetIOType(); err != nil {
+				return nil, err
+			}
 		}
 	} else {
 		if err := db.loadSeqNo(); err != nil {
@@ -366,10 +374,19 @@ func (db *DB) appendLogRecord(logRecord *data.LogRecord) (*data.LogRecordPos, er
 		return nil, err
 	}
 
+	db.bytesWritten += uint(size)
+
+	var needSync = db.options.SyncWrites
+	if !needSync && db.options.BytesPerSync > 0 && db.bytesWritten >= db.options.BytesPerSync {
+		needSync = true
+	}
 	// 根据配置决定是否立刻持久化
-	if db.options.SyncWrites {
+	if needSync {
 		if err := db.activeFile.Sync(); err != nil {
 			return nil, err
+		}
+		if db.bytesWritten > 0 {
+			db.bytesWritten = 0
 		}
 	}
 
@@ -386,7 +403,7 @@ func (db *DB) setActiveDataFile() error {
 		// id 递增
 		initialFileId = db.activeFile.FileId + 1
 	}
-	dataFile, err := data.OpenDataFile(db.options.DirPath, initialFileId)
+	dataFile, err := data.OpenDataFile(db.options.DirPath, initialFileId, fio.StandardFileIO)
 	if err != nil {
 		return err
 	}
@@ -421,7 +438,11 @@ func (db *DB) loadDataFiles() error {
 
 	// 遍历打开每个数据文件
 	for i, fid := range fileIds {
-		dataFile, err := data.OpenDataFile(db.options.DirPath, uint32(fid))
+		ioType := fio.StandardFileIO
+		if db.options.MMapAtStart {
+			ioType = fio.MemoryMap
+		}
+		dataFile, err := data.OpenDataFile(db.options.DirPath, uint32(fid), ioType)
 		if err != nil {
 			return err
 		}
@@ -570,5 +591,20 @@ func (db *DB) loadSeqNo() error {
 		return err
 	}
 	db.seqNoFileExists = true
+	return nil
+}
+
+func (db *DB) resetIOType() error {
+	if db.activeFile == nil {
+		return nil
+	}
+	if err := db.activeFile.SetIOManager(db.options.DirPath, fio.StandardFileIO); err != nil {
+		return err
+	}
+	for _, file := range db.olderFiles {
+		if err := file.SetIOManager(db.options.DirPath, fio.StandardFileIO); err != nil {
+			return err
+		}
+	}
 	return nil
 }

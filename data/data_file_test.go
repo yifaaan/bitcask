@@ -5,16 +5,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/yifaaan/bitcask/fio"
 )
 
 func TestOpenDataFile(t *testing.T) {
-	dataFile, err := OpenDataFile(os.TempDir(), 0)
+	dataFile, err := OpenDataFile(os.TempDir(), 0, fio.StandardFileIO)
 	assert.Nil(t, err)
 	assert.NotNil(t, dataFile)
 }
 
 func TestDataFile_Write(t *testing.T) {
-	dataFile, err := OpenDataFile(os.TempDir(), 0)
+	dataFile, err := OpenDataFile(os.TempDir(), 0, fio.StandardFileIO)
 	assert.Nil(t, err)
 	assert.NotNil(t, dataFile)
 
@@ -29,7 +30,7 @@ func TestDataFile_Write(t *testing.T) {
 }
 
 func TestDataFile_Close(t *testing.T) {
-	dataFile, err := OpenDataFile(os.TempDir(), 0)
+	dataFile, err := OpenDataFile(os.TempDir(), 0, fio.StandardFileIO)
 	assert.Nil(t, err)
 	assert.NotNil(t, dataFile)
 
@@ -38,7 +39,7 @@ func TestDataFile_Close(t *testing.T) {
 }
 
 func TestDataFile_ReadLogRecord(t *testing.T) {
-	dataFile, err := OpenDataFile(os.TempDir(), 333)
+	dataFile, err := OpenDataFile(os.TempDir(), 333, fio.StandardFileIO)
 	assert.Nil(t, err)
 	assert.NotNil(t, dataFile)
 

@@ -12,6 +12,10 @@ type Options struct {
 	SyncWrites bool
 	// 使用的索引类型
 	IndexType IndexerType
+	// 写入多少字节后进行一次持久化
+	BytesPerSync uint
+	// 是否在启动时使用mmap加载数据文件
+	MMapAtStart bool
 }
 
 type IndexerType = int8
@@ -27,6 +31,8 @@ var DefaultOptions = Options{
 	DataFileSize: 256 * 1024 * 1024,
 	SyncWrites:   false,
 	IndexType:    BPlusTree,
+	BytesPerSync: 0,
+	MMapAtStart:  true,
 }
 
 type IteratorOptions struct {

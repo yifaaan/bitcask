@@ -29,31 +29,31 @@ type DataFile struct {
 }
 
 // 打开新的数据文件
-func OpenDataFile(dirPath string, fileId uint32) (*DataFile, error) {
+func OpenDataFile(dirPath string, fileId uint32, ioType fio.FileIOType) (*DataFile, error) {
 	fileName := filepath.Join(dirPath, fmt.Sprintf("%09d%s", fileId, DataFileNameSuffix))
-	return newDataFile(fileName, fileId)
+	return newDataFile(fileName, fileId, ioType)
 }
 
 // 打开hint索引文件
 func OpenHintFile(dirPath string) (*DataFile, error) {
 	fileName := filepath.Join(dirPath, HintFileName)
-	return newDataFile(fileName, 0)
+	return newDataFile(fileName, 0, fio.StandardFileIO)
 }
 
 // 打开标识merge完成的文件
 func OpenMergeFinishedFile(dirPath string) (*DataFile, error) {
 	fileName := filepath.Join(dirPath, MergeFinishedFileName)
-	return newDataFile(fileName, 0)
+	return newDataFile(fileName, 0, fio.StandardFileIO)
 }
 
 // 打开标事务序列号的文件
 func OpenSeqNoFile(dirPath string) (*DataFile, error) {
 	fileName := filepath.Join(dirPath, SeqNoFileName)
-	return newDataFile(fileName, 0)
+	return newDataFile(fileName, 0, fio.StandardFileIO)
 }
 
-func newDataFile(fileName string, fileId uint32) (*DataFile, error) {
-	iomanager, err := fio.NewFileIOManager(fileName)
+func newDataFile(fileName string, fileId uint32, ioType fio.FileIOType) (*DataFile, error) {
+	iomanager, err := fio.NewIOManager(fileName, ioType)
 	if err != nil {
 		return nil, err
 	}
@@ -134,6 +134,18 @@ func (df *DataFile) readNBytes(n, offset int64) (b []byte, err error) {
 	b = make([]byte, n)
 	_, err = df.IOManager.Read(b, offset)
 	return
+}
+
+func (df *DataFile) SetIOManager(dirPath string, ioType fio.FileIOType) error {
+	if err := df.IOManager.Close(); err != nil {
+		return err
+	}
+	var err error
+	df.IOManager, err = fio.NewIOManager(filepath.Join(dirPath, fmt.Sprintf("%09d%s", df.FileId, DataFileNameSuffix)), ioType)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 func getLogRecordCRC(logRecord *LogRecord, header []byte) uint32 {
