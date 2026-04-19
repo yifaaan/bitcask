@@ -12,12 +12,12 @@ namespace bitcask
         BTree() = default;
         ~BTree() override = default;
 
-        void Put(std::string_view key, RecordPos pos) override;
-        std::optional<RecordPos> Get(std::string_view key) const override;
+        void Put(std::string_view key, LogRecordPos pos) override;
+        std::optional<LogRecordPos> Get(std::string_view key) const override;
         bool Delete(std::string_view key) override;
 
     private:
-        phmap::btree_map<std::string, RecordPos> index_;
+        phmap::btree_map<std::string, LogRecordPos> index_;
         mutable std::shared_mutex mutex_;
     };
 

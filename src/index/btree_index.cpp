@@ -2,13 +2,13 @@
 
 namespace bitcask
 {
-    void BTree::Put(std::string_view key, RecordPos pos)
+    void BTree::Put(std::string_view key, LogRecordPos pos)
     {
         std::unique_lock lock(mutex_);
         index_[std::string(key)] = pos;
     }
 
-    std::optional<RecordPos> BTree::Get(std::string_view key) const
+    std::optional<LogRecordPos> BTree::Get(std::string_view key) const
     {
         std::shared_lock lock(mutex_);
         if (auto it = index_.find(std::string(key)); it != index_.end())
