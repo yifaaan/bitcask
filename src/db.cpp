@@ -1,8 +1,12 @@
 #include "db.h"
+#include "data/data_file.h"
+#include "data/log_record.h"
 #include "status.h"
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
+#include <shared_mutex>
 #include <utility>
 
 #ifdef _WIN32
@@ -105,6 +109,46 @@ namespace bitcask
         }
         active_data_file_ = std::move(data_file);
         return Status::Ok();
+    }
+
+    std::optional<std::string> DB::Get(std::string_view key) const
+    {
+        std::shared_lock lock(mutex_);
+        
+        if (key.empty())
+        {
+            return std::nullopt;
+        }
+        // 从内存索引获取记录位置
+        auto pos_opt = index_->Get(key);
+        if (!pos_opt)
+        {
+            return std::nullopt;
+        }
+
+        // 根据位置获取数据文件
+        DataFile* data_file = nullptr;
+        if (active_data_file_ && active_data_file_->fid == pos_opt->fid)
+        {
+            data_file = active_data_file_.get();
+        }
+        else
+        {
+            data_file = old_data_files_.at(pos_opt->fid).get();
+        }
+        if (!data_file)
+        {
+            return std::nullopt;
+        }
+
+        // 读取数据文件中的记录
+        LogRecord record;
+        if (auto status = data_file->ReadLogRecord(pos_opt->offset, record); !status || record.type == LogRecordType::kDeleted)
+        {
+            return std::nullopt;
+        }
+
+        return record.value;
     }
 
 } // namespace bitcask

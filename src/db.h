@@ -3,7 +3,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <shared_mutex>
 #include <string>
@@ -46,7 +45,7 @@ namespace bitcask
         // 调用该方法时需要持有 mutex_
         Status SetActiveDataFile();
 
-        std::mutex mutex_;
+        mutable std::shared_mutex mutex_;
         Options options_;
         std::unique_ptr<Indexer> index_;
         std::unique_ptr<DataFile> active_data_file_;

@@ -5,6 +5,7 @@
 
 #include "../fio/io_manager.h"
 #include "../status.h"
+#include "log_record.h"
 
 namespace bitcask
 {
@@ -31,6 +32,12 @@ namespace bitcask
                 return Status::IOError("Failed to write complete record");
             }
             write_offset += written;
+            return Status::Ok();
+        }
+
+        Status ReadLogRecord(uint64_t offset, LogRecord& record)
+        {
+            // TODO:
             return Status::Ok();
         }
 
