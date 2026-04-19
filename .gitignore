@@ -1,0 +1,27 @@
+# Build
+build/
+out/
+
+# IDE
+.vs/
+*.user
+*.suo
+*.sln
+*.vcxproj*
+
+# vcpkg
+vcpkg/
+vcpkg_installed/
+
+# Compiled
+*.o
+*.obj
+*.exe
+*.a
+*.lib
+*.so
+*.dylib
+
+# OS
+.DS_Store
+Thumbs.db
