@@ -14,8 +14,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_path(PARALLEL_HASHMAP_INCLUDE_DIRS "parallel_hashmap/btree.h")
 find_package(spdlog CONFIG REQUIRED)
 
-add_executable(bitcask src/main.cpp
-    src/btree_index.cpp)
+add_executable(bitcask 
+    src/main.cpp
+    src/index/btree_index.cpp
+    src/fio/file_io.cpp
+)
+
 target_include_directories(bitcask PRIVATE
     # ${CMAKE_SOURCE_DIR}/include
     ${PARALLEL_HASHMAP_INCLUDE_DIRS}

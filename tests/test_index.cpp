@@ -1,5 +1,5 @@
 #include <catch2/catch_test_macros.hpp>
-#include "index.h"
+#include "index/index.h"
 #include <memory>
 
 TEST_CASE("Index")

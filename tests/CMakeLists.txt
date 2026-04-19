@@ -2,7 +2,9 @@ find_package(Catch2 3 CONFIG REQUIRED)
 
 add_executable(bitcask_tests
     test_index.cpp
-    ${CMAKE_SOURCE_DIR}/src/btree_index.cpp
+    test_file_io.cpp
+    ${CMAKE_SOURCE_DIR}/src/index/btree_index.cpp
+    ${CMAKE_SOURCE_DIR}/src/fio/file_io.cpp
 )
 
 target_include_directories(bitcask_tests PRIVATE
