@@ -1,7 +1,9 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace bitcask
 {
@@ -14,6 +16,12 @@ namespace bitcask
     // 写入数据文件的记录
     struct LogRecord
     {
+        static std::vector<std::byte> Encode(const LogRecord& record)
+        {
+            // TODO: 实现编码逻辑，将 LogRecord 序列化为字节流
+            return {};
+        }
+
         std::string key;
         std::string value;
         LogRecordType type;

@@ -11,6 +11,7 @@ namespace bitcask
         kNotFound,
         kIOError,
         kKeyIsEmpty,
+        kUpdateIndexFailed,
     };
 
     class Status
@@ -33,6 +34,10 @@ namespace bitcask
         static Status KeyIsEmpty(std::string_view msg)
         {
             return { StatusCode::kKeyIsEmpty, msg };
+        }
+        static Status UpdateIndexFailed(std::string_view msg)
+        {
+            return { StatusCode::kUpdateIndexFailed, msg };
         }
 
         [[nodiscard]] bool ok() const

@@ -18,6 +18,7 @@ add_executable(bitcask
     src/main.cpp
     src/index/btree_index.cpp
     src/fio/file_io.cpp
+    src/db.cpp
 )
 
 target_include_directories(bitcask PRIVATE

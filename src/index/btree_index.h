@@ -12,9 +12,9 @@ namespace bitcask
         BTree() = default;
         ~BTree() override = default;
 
-        void Put(std::string_view key, LogRecordPos pos) override;
+        Status Put(std::string_view key, LogRecordPos pos) override;
         std::optional<LogRecordPos> Get(std::string_view key) const override;
-        bool Delete(std::string_view key) override;
+        Status Delete(std::string_view key) override;
 
     private:
         phmap::btree_map<std::string, LogRecordPos> index_;

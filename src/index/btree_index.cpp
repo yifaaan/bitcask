@@ -2,10 +2,11 @@
 
 namespace bitcask
 {
-    void BTree::Put(std::string_view key, LogRecordPos pos)
+    Status BTree::Put(std::string_view key, LogRecordPos pos)
     {
         std::unique_lock lock(mutex_);
         index_[std::string(key)] = pos;
+        return Status::Ok();
     }
 
     std::optional<LogRecordPos> BTree::Get(std::string_view key) const
@@ -18,10 +19,10 @@ namespace bitcask
         return std::nullopt;
     }
 
-    bool BTree::Delete(std::string_view key)
+    Status BTree::Delete(std::string_view key)
     {
         std::unique_lock lock(mutex_);
-        return index_.erase(std::string(key)) > 0;
+        return index_.erase(std::string(key)) > 0 ? Status::Ok() : Status::NotFound("Key not found in index");
     }
 
     std::unique_ptr<Indexer> CreateBTreeIndex()

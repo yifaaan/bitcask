@@ -25,3 +25,4 @@ vcpkg_installed/
 # OS
 .DS_Store
 Thumbs.db
+.cache/
