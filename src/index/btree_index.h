@@ -21,4 +21,6 @@ namespace bitcask
         mutable std::shared_mutex mutex_;
     };
 
+    std::unique_ptr<BTree> CreateBTreeIndex();
+
 } // namespace bitcask

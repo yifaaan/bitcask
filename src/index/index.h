@@ -8,6 +8,12 @@
 namespace bitcask
 {
 
+    enum class IndexType
+    {
+        BTree,
+        // TODO:
+        ART,
+    };
     // 数据的内存索引，key -> RecordPos
     class Indexer
     {
@@ -24,5 +30,5 @@ namespace bitcask
         virtual Status Delete(std::string_view key) = 0;
     };
 
-    std::unique_ptr<Indexer> CreateBTreeIndex();
+    std::unique_ptr<Indexer> CreateIndex(IndexType type);
 }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -9,7 +8,6 @@
 #include <string_view>
 
 #include "data/data_file.h"
-#include "fio/io_manager.h"
 #include "index/index.h"
 #include "status.h"
 #include "options.h"
@@ -27,6 +25,9 @@ namespace bitcask
         DB(DB&&) = delete;
         auto operator=(DB&&) -> DB& = delete;
 
+        // 打开数据库，加载索引
+        static std::unique_ptr<DB> Open(Options options);
+
         // 写入 key-value 对
         Status Put(std::string_view key, std::string_view value);
 
@@ -39,6 +40,8 @@ namespace bitcask
         void Close();
 
     private:
+        DB(Options options);
+
         // 将 LogRecord 写入数据文件，并返回记录的位置，方便更新索引
         Status AppendLogRecord(const LogRecord& record, LogRecordPos& pos);
         // 设置当前活跃数据文件

@@ -1,10 +1,5 @@
 #include "db.h"
-#include "data/data_file.h"
-#include "data/log_record.h"
-#include "status.h"
 
-#include <algorithm>
-#include <cstring>
 #include <mutex>
 #include <shared_mutex>
 #include <utility>
@@ -13,8 +8,52 @@
 #include <intrin.h>
 #endif
 
+#include "data/data_file.h"
+#include "data/log_record.h"
+#include "status.h"
+
+namespace fs = std::filesystem;
+
 namespace bitcask
 {
+
+    DB::DB(Options options) : options_(std::move(options))
+    {
+        switch (options_.index_type)
+        {
+        case IndexType::BTree:
+            index_ = CreateIndex(IndexType::BTree);
+            break;
+        // case IndexType::ART:
+        //     index_ = CreateIndex(IndexType::ART);
+        //     break;
+        default:
+            index_ = CreateIndex(IndexType::BTree);
+        }
+    }
+
+    std::unique_ptr<DB> DB::Open(Options options)
+    {
+        if (options.data_dir.empty())
+        {
+            return nullptr;
+        }
+        if (options.max_data_file_size <= 0)
+        {
+            return nullptr;
+        }
+
+        if (!fs::exists(options.data_dir))
+        {
+            if (!fs::create_directories(options.data_dir))
+            {
+                return nullptr;
+            }
+        }
+
+        std::unique_ptr<DB> db(new DB(std::move(options)));
+        return db;
+    }
 
     Status DB::Put(std::string_view key, std::string_view value)
     {
@@ -114,7 +153,7 @@ namespace bitcask
     std::optional<std::string> DB::Get(std::string_view key) const
     {
         std::shared_lock lock(mutex_);
-        
+
         if (key.empty())
         {
             return std::nullopt;

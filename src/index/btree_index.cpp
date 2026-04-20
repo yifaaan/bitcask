@@ -25,7 +25,7 @@ namespace bitcask
         return index_.erase(std::string(key)) > 0 ? Status::Ok() : Status::NotFound("Key not found in index");
     }
 
-    std::unique_ptr<Indexer> CreateBTreeIndex()
+    std::unique_ptr<BTree> CreateBTreeIndex()
     {
         return std::make_unique<BTree>();
     }
