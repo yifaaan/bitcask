@@ -64,6 +64,9 @@ namespace bitcask
 
     int64_t FileIO::Size() const
     {
+        if (std::fflush(fd_) != 0)
+            return -1;
+
 #ifdef _WIN32
         struct _stat64 st;
         if (_fstat64(_fileno(fd_), &st) != 0)
