@@ -1,20 +1,20 @@
 #pragma once
 
-#include "absl/container/btree_map.h"
+#include <absl/container/btree_map.h>
+#include <absl/strings/string_view.h>
+#include <absl/status/status.h>
+#include <absl/status/statusor.h>
 
 #include <cstdint>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
 #include <string>
-#include <string_view>
 #include <vector>
-
-#include "absl/strings/string_view.h"
-#include "absl/status/status.h"
 
 #include "data/data_file.h"
 #include "index/index.h"
+#include "iterator.h"
 #include "options.h"
 
 namespace bitcask
@@ -39,18 +39,25 @@ namespace bitcask
         std::optional<std::string> Get(absl::string_view key);
         // 删除 key
         absl::Status Delete(absl::string_view key);
+        std::unique_ptr<Iterator> NewIterator(IteratorOptions options = {});
         void Close();
 
     private:
         explicit DB(Options options);
 
+        friend class Iterator;
+
         // 将 LogRecord 写入数据文件，并返回记录的位置，方便更新索引
         absl::Status AppendLogRecord(const LogRecord& record, LogRecordPos& pos);
+
         // 设置当前活跃数据文件
         // 调用该方法时需要持有 mutex_
         absl::Status SetActiveDataFile();
+
         absl::Status LoadDataFiles();
         absl::Status LoadIndexFromDataFiles();
+
+        absl::StatusOr<std::string> GetValueByPosition(const LogRecordPos& pos);
 
         Options options_;
         std::unique_ptr<Indexer> index_;

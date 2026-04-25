@@ -1,17 +1,24 @@
 #pragma once
 
 #include "index/index.h"
-#include "options.h"
 
-class DB;
+
+#include <memory>
+#include <optional>
+#include <string>
+
+#include "options.h"
 
 namespace bitcask
 {
 
+    class DB;
+
+    // 用户迭代器接口
     class Iterator final
     {
     public:
-        Iterator(DB& db, std::unique_ptr<IndexIterator> index_iter, IteratorOptions options);
+        Iterator(DB* db, std::unique_ptr<IndexIterator> index_iter, IteratorOptions options);
 
         Iterator(const Iterator&) = delete;
         Iterator& operator=(const Iterator&) = delete;
@@ -28,8 +35,8 @@ namespace bitcask
         [[nodiscard]] std::optional<std::string> Value() const;
 
     private:
+        // 跳过不匹配前缀的项
         void SkipToNext();
-        [[nodiscard]] bool MatchPrefix() const;
 
         DB* db_;
         std::unique_ptr<IndexIterator> index_iter_;

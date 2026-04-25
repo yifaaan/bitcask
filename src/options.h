@@ -19,7 +19,7 @@ namespace bitcask
     struct IteratorOptions
     {
         absl::string_view prefix;
-        bool reverse;
+        bool reverse = false;
     };
 
 } // namespace bitcask

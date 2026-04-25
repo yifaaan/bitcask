@@ -1,15 +1,17 @@
 #include "db.h"
 
+#include <absl/strings/string_view.h>
+#include <absl/status/status.h>
+#include <absl/status/statusor.h>
+
 #include <algorithm>
 #include <filesystem>
-#include <format>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
 #include <utility>
 
-#include "absl/strings/string_view.h"
-#include "absl/status/status.h"
+
 
 namespace fs = std::filesystem;
 
@@ -99,32 +101,11 @@ namespace bitcask
         }
 
         // 根据位置获取数据文件
-        DataFile* data_file = nullptr;
-        if (active_file_ && active_file_->fid == pos_opt->fid)
+        if (auto res = GetValueByPosition(pos_opt.value()); res.ok())
         {
-            data_file = active_file_.get();
+            return res.value();
         }
-        else
-        {
-            auto it = older_files_.find(pos_opt->fid);
-            if (it != older_files_.end())
-            {
-                data_file = it->second.get();
-            }
-        }
-        if (!data_file)
-        {
-            return std::nullopt;
-        }
-
-        // 读取数据文件中的记录
-        auto [record_opt, size, is_eof] = data_file->ReadLogRecord(pos_opt->offset);
-        if (!record_opt || record_opt->type == LogRecordType::kDeleted)
-        {
-            return std::nullopt;
-        }
-
-        return record_opt->value;
+        return std::nullopt;
     }
 
     absl::Status DB::Delete(absl::string_view key)
@@ -155,6 +136,12 @@ namespace bitcask
         }
 
         return absl::OkStatus();
+    }
+
+    std::unique_ptr<Iterator> DB::NewIterator(IteratorOptions options)
+    {
+        std::shared_lock<std::shared_mutex> lock(mutex_);
+        return std::make_unique<Iterator>(this, index_->Iterator(options.reverse), options);
     }
 
     void DB::Close()
@@ -355,6 +342,37 @@ namespace bitcask
         }
 
         return absl::OkStatus();
+    }
+
+    absl::StatusOr<std::string> DB::GetValueByPosition(const LogRecordPos& pos)
+    {
+        // 根据位置获取数据文件
+        DataFile* data_file = nullptr;
+        if (active_file_ && active_file_->fid == pos.fid)
+        {
+            data_file = active_file_.get();
+        }
+        else
+        {
+            auto it = older_files_.find(pos.fid);
+            if (it != older_files_.end())
+            {
+                data_file = it->second.get();
+            }
+        }
+        if (!data_file)
+        {
+            return absl::NotFoundError("data file not found");
+        }
+
+        // 读取数据文件中的记录
+        auto [record_opt, size, is_eof] = data_file->ReadLogRecord(pos.offset);
+        if (!record_opt || record_opt->type == LogRecordType::kDeleted)
+        {
+            return absl::NotFoundError("record not found");
+        }
+
+        return record_opt->value;
     }
 
 } // namespace bitcask

@@ -1,9 +1,13 @@
 #include "btree_index.h"
-#include "data/log_record.h"
+
+
+
 #include <algorithm>
 #include <iterator>
 #include <limits>
 #include <vector>
+
+#include "data/log_record.h"
 
 namespace bitcask
 {
@@ -15,7 +19,10 @@ namespace bitcask
         public:
             using Item = std::pair<std::string, LogRecordPos>;
 
-            BTreeIndexIterator(std::vector<Item> items, bool reverse) : items_(std::move(items)), reverse_(reverse) {}
+            BTreeIndexIterator(std::vector<Item> items, bool reverse) : items_(std::move(items)), reverse_(reverse)
+            {
+                Rewind();
+            }
 
             void Rewind() override
             {
