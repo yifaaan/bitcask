@@ -2,7 +2,7 @@
 
 #include <optional>
 #include <memory>
-#include <string_view>
+#include "absl/strings/string_view.h"
 
 #include "../data/log_record.h"
 
@@ -20,9 +20,9 @@ namespace bitcask
     public:
         virtual ~Indexer() = default;
 
-        virtual bool Put(std::string_view key, LogRecordPos pos) = 0;
-        virtual std::optional<LogRecordPos> Get(std::string_view key) const = 0;
-        virtual bool Delete(std::string_view key) = 0;
+        virtual bool Put(absl::string_view key, LogRecordPos pos) = 0;
+        virtual std::optional<LogRecordPos> Get(absl::string_view key) const = 0;
+        virtual bool Delete(absl::string_view key) = 0;
     };
 
     std::unique_ptr<Indexer> CreateIndexer(IndexType type);

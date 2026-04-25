@@ -4,6 +4,8 @@
 #include <shared_mutex>
 #include <string>
 
+#include "absl/strings/string_view.h"
+
 #include "index.h"
 
 namespace bitcask
@@ -15,9 +17,9 @@ namespace bitcask
         BTreeIndex() = default;
         ~BTreeIndex() override = default;
 
-        bool Put(std::string_view key, LogRecordPos pos) override;
-        std::optional<LogRecordPos> Get(std::string_view key) const override;
-        bool Delete(std::string_view key) override;
+        bool Put(absl::string_view key, LogRecordPos pos) override;
+        std::optional<LogRecordPos> Get(absl::string_view key) const override;
+        bool Delete(absl::string_view key) override;
 
     private:
         phmap::btree_map<std::string, LogRecordPos> index_;

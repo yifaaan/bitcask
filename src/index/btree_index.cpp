@@ -3,14 +3,14 @@
 namespace bitcask
 {
 
-    bool BTreeIndex::Put(std::string_view key, LogRecordPos pos)
+    bool BTreeIndex::Put(absl::string_view key, LogRecordPos pos)
     {
         std::unique_lock lock(mutex_);
         index_[std::string(key)] = pos;
         return true;
     }
 
-    std::optional<LogRecordPos> BTreeIndex::Get(std::string_view key) const
+    std::optional<LogRecordPos> BTreeIndex::Get(absl::string_view key) const
     {
         std::shared_lock lock(mutex_);
         if (auto it = index_.find(std::string(key)); it != index_.end())
@@ -20,7 +20,7 @@ namespace bitcask
         return std::nullopt;
     }
 
-    bool BTreeIndex::Delete(std::string_view key)
+    bool BTreeIndex::Delete(absl::string_view key)
     {
         std::unique_lock lock(mutex_);
         return index_.erase(std::string(key)) > 0;

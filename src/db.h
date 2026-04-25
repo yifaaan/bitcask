@@ -7,9 +7,11 @@
 #include <optional>
 #include <shared_mutex>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
+#include "absl/strings/string_view.h"
 #include "absl/status/status.h"
 
 #include "data/data_file.h"
@@ -33,11 +35,11 @@ namespace bitcask
         static std::unique_ptr<DB> Open(Options options);
 
         // 写入 key-value 对
-        absl::Status Put(std::string_view key, std::string_view value);
+        absl::Status Put(absl::string_view key, absl::string_view value);
         // 读取 key 对应的 value
-        std::optional<std::string> Get(std::string_view key);
+        std::optional<std::string> Get(absl::string_view key);
         // 删除 key
-        absl::Status Delete(std::string_view key);
+        absl::Status Delete(absl::string_view key);
         void Close();
 
     private:

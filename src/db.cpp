@@ -8,6 +8,7 @@
 #include <string>
 #include <utility>
 
+#include "absl/strings/string_view.h"
 #include "absl/status/status.h"
 
 namespace fs = std::filesystem;
@@ -54,7 +55,7 @@ namespace bitcask
         return db;
     }
 
-    absl::Status DB::Put(std::string_view key, std::string_view value)
+    absl::Status DB::Put(absl::string_view key, absl::string_view value)
     {
         if (key.empty())
         {
@@ -81,7 +82,7 @@ namespace bitcask
         return absl::OkStatus();
     }
 
-    std::optional<std::string> DB::Get(std::string_view key)
+    std::optional<std::string> DB::Get(absl::string_view key)
     {
         std::shared_lock lock(mutex_);
 
@@ -126,7 +127,7 @@ namespace bitcask
         return record_opt->value;
     }
 
-    absl::Status DB::Delete(std::string_view key)
+    absl::Status DB::Delete(absl::string_view key)
     {
         if (key.empty())
         {
