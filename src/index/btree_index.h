@@ -1,6 +1,6 @@
 #pragma once
 
-#include <parallel_hashmap/btree.h>
+#include "absl/container/btree_map.h"
 #include <shared_mutex>
 #include <string>
 
@@ -22,7 +22,7 @@ namespace bitcask
         bool Delete(absl::string_view key) override;
 
     private:
-        phmap::btree_map<std::string, LogRecordPos> index_;
+        absl::btree_map<std::string, LogRecordPos> index_;
         mutable std::shared_mutex mutex_;
     };
 

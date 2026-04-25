@@ -7,7 +7,6 @@
   "dependencies": [
     "abseil",
     "catch2",
-    "parallel-hashmap",
     "spdlog"
   ]
 }

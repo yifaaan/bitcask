@@ -1,6 +1,6 @@
 #pragma once
 
-#include <parallel_hashmap/btree.h>
+#include "absl/container/btree_map.h"
 
 #include <cstdint>
 #include <memory>
@@ -56,7 +56,7 @@ namespace bitcask
         Options options_;
         std::unique_ptr<Indexer> index_;
         std::unique_ptr<DataFile> active_file_;
-        phmap::btree_map<uint32_t, std::unique_ptr<DataFile>> older_files_;
+        absl::btree_map<uint32_t, std::unique_ptr<DataFile>> older_files_;
         std::vector<int> file_ids_;
         mutable std::shared_mutex mutex_;
     };

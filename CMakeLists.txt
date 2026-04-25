@@ -11,7 +11,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_path(PARALLEL_HASHMAP_INCLUDE_DIRS "parallel_hashmap/btree.h")
 find_package(spdlog CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 
@@ -25,9 +24,8 @@ add_library(bitcask_lib STATIC
 
 target_include_directories(bitcask_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/src
-    ${PARALLEL_HASHMAP_INCLUDE_DIRS}
 )
-target_link_libraries(bitcask_lib PUBLIC spdlog::spdlog absl::status absl::crc32c)
+target_link_libraries(bitcask_lib PUBLIC spdlog::spdlog absl::status absl::crc32c absl::btree absl::strings)
 
 add_executable(bitcask_demo src/main.cpp)
 target_link_libraries(bitcask_demo PRIVATE bitcask_lib)
