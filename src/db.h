@@ -1,0 +1,62 @@
+#pragma once
+
+#include <parallel_hashmap/btree.h>
+
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <shared_mutex>
+#include <span>
+#include <string_view>
+#include <vector>
+
+#include "absl/status/status.h"
+
+#include "data/data_file.h"
+#include "index/index.h"
+#include "options.h"
+
+namespace bitcask
+{
+
+    class DB
+    {
+    public:
+        ~DB() = default;
+
+        DB(const DB&) = delete;
+        DB& operator=(const DB&) = delete;
+        DB(DB&&) = delete;
+        DB& operator=(DB&&) = delete;
+
+        // 打开数据库，加载索引
+        static std::unique_ptr<DB> Open(Options options);
+
+        // 写入 key-value 对
+        absl::Status Put(std::string_view key, std::string_view value);
+        // 读取 key 对应的 value
+        std::optional<std::string> Get(std::string_view key);
+        // 删除 key
+        absl::Status Delete(std::string_view key);
+        void Close();
+
+    private:
+        explicit DB(Options options);
+
+        // 将 LogRecord 写入数据文件，并返回记录的位置，方便更新索引
+        absl::Status AppendLogRecord(const LogRecord& record, LogRecordPos& pos);
+        // 设置当前活跃数据文件
+        // 调用该方法时需要持有 mutex_
+        absl::Status SetActiveDataFile();
+        absl::Status LoadDataFiles();
+        absl::Status LoadIndexFromDataFiles();
+
+        Options options_;
+        std::unique_ptr<Indexer> index_;
+        std::unique_ptr<DataFile> active_file_;
+        phmap::btree_map<uint32_t, std::unique_ptr<DataFile>> older_files_;
+        std::vector<int> file_ids_;
+        mutable std::shared_mutex mutex_;
+    };
+
+} // namespace bitcask
