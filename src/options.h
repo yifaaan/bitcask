@@ -16,4 +16,10 @@ namespace bitcask
         IndexType index_type = IndexType::BTree;
     };
 
+    struct IteratorOptions
+    {
+        absl::string_view prefix;
+        bool reverse;
+    };
+
 } // namespace bitcask
