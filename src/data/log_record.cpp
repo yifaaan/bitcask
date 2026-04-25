@@ -5,9 +5,12 @@
 namespace bitcask
 {
 
-    static absl::string_view ToSV(absl::Span<const std::byte> s)
+    namespace
     {
-        return {reinterpret_cast<const char*>(s.data()), s.size()};
+        absl::string_view ToSV(absl::Span<const std::byte> s)
+        {
+            return { reinterpret_cast<const char*>(s.data()), s.size() };
+        }
     }
 
     std::pair<std::vector<std::byte>, int64_t> EncodeLogRecord(const LogRecord& record)
@@ -16,10 +19,10 @@ namespace bitcask
 
         header[4] = static_cast<std::byte>(record.type);
         int index = 5;
-        index += PutVarint(absl::Span<std::byte>(header).subspan(index), static_cast<int64_t>(record.key.size()));
-        index += PutVarint(absl::Span<std::byte>(header).subspan(index), static_cast<int64_t>(record.value.size()));
+        index += PutVarint(absl::MakeSpan(header).subspan(index), static_cast<int64_t>(record.key.size()));
+        index += PutVarint(absl::MakeSpan(header).subspan(index), static_cast<int64_t>(record.value.size()));
 
-        auto length = static_cast<int64_t>(index + record.key.size() + record.value.size());
+        auto length = static_cast<int64_t>(index + record.key.size() + record.value.size()); // record length
         std::vector<std::byte> buf(length);
 
         // Copy header
@@ -37,30 +40,21 @@ namespace bitcask
             std::memcpy(buf.data() + index + record.key.size(), record.value.data(), record.value.size());
         }
 
-        // Calculate and store CRC in little-endian (over everything after the CRC field)
-        uint32_t crc_val = static_cast<uint32_t>(absl::ComputeCrc32c(ToSV(absl::Span<const std::byte>(buf).subspan(4))));
-        // Store CRC as little-endian, matching Go's binary.LittleEndian.PutUint32
-        buf[0] = static_cast<std::byte>(crc_val & 0xFF);
-        buf[1] = static_cast<std::byte>((crc_val >> 8) & 0xFF);
-        buf[2] = static_cast<std::byte>((crc_val >> 16) & 0xFF);
-        buf[3] = static_cast<std::byte>((crc_val >> 24) & 0xFF);
+        auto crc_val = static_cast<uint32_t>(absl::ComputeCrc32c(ToSV(absl::MakeConstSpan(buf).subspan(4))));
+        std::memcpy(buf.data(), &crc_val, sizeof(crc_val)); // little endian
 
-        return {std::move(buf), length};
+        return { std::move(buf), length };
     }
 
     std::pair<std::optional<LogRecordHeader>, int64_t> DecodeLogRecordHeader(absl::Span<const std::byte> buf)
     {
         if (buf.size() <= 4)
         {
-            return {std::nullopt, 0};
+            return { std::nullopt, 0 };
         }
 
         LogRecordHeader header;
-        // Read CRC as little-endian
-        header.crc = static_cast<uint32_t>(static_cast<uint8_t>(buf[0])) |
-                     (static_cast<uint32_t>(static_cast<uint8_t>(buf[1])) << 8) |
-                     (static_cast<uint32_t>(static_cast<uint8_t>(buf[2])) << 16) |
-                     (static_cast<uint32_t>(static_cast<uint8_t>(buf[3])) << 24);
+        std::memcpy(&header.crc, buf.data(), sizeof(header.crc));
         header.type = static_cast<LogRecordType>(buf[4]);
 
         int index = 5;
@@ -72,7 +66,7 @@ namespace bitcask
         header.value_size = value_size;
         index += n2;
 
-        return {header, static_cast<int64_t>(index)};
+        return { header, static_cast<int64_t>(index) };
     }
 
     uint32_t CalcLogRecordCRC(const LogRecord& record, absl::Span<const std::byte> header)
