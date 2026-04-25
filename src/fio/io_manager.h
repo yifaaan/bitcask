@@ -3,8 +3,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <memory>
-#include <span>
 #include <vector>
+
+#include "absl/types/span.h"
 
 namespace bitcask
 {
@@ -14,8 +15,8 @@ namespace bitcask
     public:
         virtual ~IOManager() = default;
 
-        virtual int Read(std::span<std::byte> buf, int64_t offset) = 0;
-        virtual int Write(std::span<const std::byte> data) = 0;
+        virtual int Read(absl::Span<std::byte> buf, int64_t offset) = 0;
+        virtual int Write(absl::Span<const std::byte> data) = 0;
         virtual bool Sync() = 0;
         virtual bool Close() = 0;
         virtual int64_t Size() const = 0;

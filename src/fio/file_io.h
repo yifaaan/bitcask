@@ -21,8 +21,8 @@ namespace bitcask
         FileIO(FileIO&&) = delete;
         FileIO& operator=(FileIO&&) = delete;
 
-        int Read(std::span<std::byte> buf, int64_t offset) override;
-        int Write(std::span<const std::byte> data) override;
+        int Read(absl::Span<std::byte> buf, int64_t offset) override;
+        int Write(absl::Span<const std::byte> data) override;
         bool Sync() override;
         bool Close() override;
         int64_t Size() const override;

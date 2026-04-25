@@ -5,7 +5,7 @@
 namespace bitcask
 {
 
-    static absl::string_view ToSV(std::span<const std::byte> s)
+    static absl::string_view ToSV(absl::Span<const std::byte> s)
     {
         return {reinterpret_cast<const char*>(s.data()), s.size()};
     }
@@ -16,8 +16,8 @@ namespace bitcask
 
         header[4] = static_cast<std::byte>(record.type);
         int index = 5;
-        index += PutVarint(std::span<std::byte>(header).subspan(index), static_cast<int64_t>(record.key.size()));
-        index += PutVarint(std::span<std::byte>(header).subspan(index), static_cast<int64_t>(record.value.size()));
+        index += PutVarint(absl::Span<std::byte>(header).subspan(index), static_cast<int64_t>(record.key.size()));
+        index += PutVarint(absl::Span<std::byte>(header).subspan(index), static_cast<int64_t>(record.value.size()));
 
         auto length = static_cast<int64_t>(index + record.key.size() + record.value.size());
         std::vector<std::byte> buf(length);
@@ -38,7 +38,7 @@ namespace bitcask
         }
 
         // Calculate and store CRC in little-endian (over everything after the CRC field)
-        uint32_t crc_val = absl::ComputeCrc32c(ToSV(std::span<const std::byte>(buf).subspan(4))).value();
+        uint32_t crc_val = absl::ComputeCrc32c(ToSV(absl::Span<const std::byte>(buf).subspan(4))).value();
         // Store CRC as little-endian, matching Go's binary.LittleEndian.PutUint32
         buf[0] = static_cast<std::byte>(crc_val & 0xFF);
         buf[1] = static_cast<std::byte>((crc_val >> 8) & 0xFF);
@@ -48,7 +48,7 @@ namespace bitcask
         return {std::move(buf), length};
     }
 
-    std::pair<std::optional<LogRecordHeader>, int64_t> DecodeLogRecordHeader(std::span<const std::byte> buf)
+    std::pair<std::optional<LogRecordHeader>, int64_t> DecodeLogRecordHeader(absl::Span<const std::byte> buf)
     {
         if (buf.size() <= 4)
         {
@@ -75,20 +75,20 @@ namespace bitcask
         return {header, static_cast<int64_t>(index)};
     }
 
-    uint32_t CalcLogRecordCRC(const LogRecord& record, std::span<const std::byte> header)
+    uint32_t CalcLogRecordCRC(const LogRecord& record, absl::Span<const std::byte> header)
     {
         auto crc_val = absl::ComputeCrc32c(ToSV(header));
 
         if (!record.key.empty())
         {
-            auto key_span = std::span<const std::byte>(
+            auto key_span = absl::Span<const std::byte>(
                 reinterpret_cast<const std::byte*>(record.key.data()), record.key.size());
             crc_val = absl::ExtendCrc32c(crc_val, ToSV(key_span));
         }
 
         if (!record.value.empty())
         {
-            auto value_span = std::span<const std::byte>(
+            auto value_span = absl::Span<const std::byte>(
                 reinterpret_cast<const std::byte*>(record.value.data()), record.value.size());
             crc_val = absl::ExtendCrc32c(crc_val, ToSV(value_span));
         }

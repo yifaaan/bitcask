@@ -4,7 +4,6 @@
 #include <filesystem>
 #include <format>
 #include <memory>
-#include <span>
 #include <string>
 #include <tuple>
 
@@ -42,7 +41,7 @@ namespace bitcask
             return io->Sync();
         }
 
-        bool Write(std::span<const std::byte> data)
+        bool Write(absl::Span<const std::byte> data)
         {
             auto written = io->Write(data);
             if (written != static_cast<int>(data.size()))
@@ -116,7 +115,7 @@ namespace bitcask
             {
                 return {std::nullopt, 0, true}; // EOF
             }
-            auto header_data = std::span<const std::byte>(header_buf).subspan(4, static_cast<size_t>(hsize - 4));
+            auto header_data = absl::Span<const std::byte>(header_buf).subspan(4, static_cast<size_t>(hsize - 4));
             uint32_t computed_crc = CalcLogRecordCRC(record, header_data);
             if (computed_crc != header_opt->crc)
             {

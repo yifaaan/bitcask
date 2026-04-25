@@ -30,7 +30,7 @@ namespace bitcask
         Close();
     }
 
-    int FileIO::Read(std::span<std::byte> buf, int64_t offset)
+    int FileIO::Read(absl::Span<std::byte> buf, int64_t offset)
     {
 #ifdef _WIN32
         if (_fseeki64(fd_, static_cast<__int64>(offset), SEEK_SET) != 0)
@@ -42,7 +42,7 @@ namespace bitcask
         return static_cast<int>(std::fread(buf.data(), 1, buf.size(), fd_));
     }
 
-    int FileIO::Write(std::span<const std::byte> data)
+    int FileIO::Write(absl::Span<const std::byte> data)
     {
         return static_cast<int>(std::fwrite(data.data(), 1, data.size(), fd_));
     }

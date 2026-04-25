@@ -3,10 +3,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "absl/types/span.h"
 
 #include "absl/crc/crc32c.h"
 
@@ -43,7 +44,7 @@ namespace bitcask
     };
 
     // Encode a varint (signed, zigzag-encoded, same as Go's binary.PutVarint)
-    inline int PutVarint(std::span<std::byte> buf, int64_t value)
+    inline int PutVarint(absl::Span<std::byte> buf, int64_t value)
     {
         uint64_t uval = static_cast<uint64_t>(value);
         int i = 0;
@@ -57,7 +58,7 @@ namespace bitcask
     }
 
     // Decode a varint, returns {value, bytes_read}
-    inline std::pair<int64_t, int> Varint(std::span<const std::byte> buf)
+    inline std::pair<int64_t, int> Varint(absl::Span<const std::byte> buf)
     {
         uint64_t result = 0;
         int shift = 0;
@@ -78,9 +79,9 @@ namespace bitcask
     std::pair<std::vector<std::byte>, int64_t> EncodeLogRecord(const LogRecord& record);
 
     // Decode header from bytes, returns {header, header_size}
-    std::pair<std::optional<LogRecordHeader>, int64_t> DecodeLogRecordHeader(std::span<const std::byte> buf);
+    std::pair<std::optional<LogRecordHeader>, int64_t> DecodeLogRecordHeader(absl::Span<const std::byte> buf);
 
     // Calculate CRC for a log record (same as Go's calcLogRecordCRC)
-    uint32_t CalcLogRecordCRC(const LogRecord& record, std::span<const std::byte> header);
+    uint32_t CalcLogRecordCRC(const LogRecord& record, absl::Span<const std::byte> header);
 
 } // namespace bitcask
