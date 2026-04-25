@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -261,4 +262,65 @@ TEST_CASE_METHOD(DBFixture, "DB Iterator filters keys by prefix", "[db][iterator
     auto value = iterator->Value();
     REQUIRE(value.has_value());
     REQUIRE(*value == "bob");
+}
+
+TEST_CASE_METHOD(DBFixture, "DB ListKeys returns live keys in sorted order", "[db]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("gamma", "3").ok());
+    REQUIRE(db->Put("alpha", "1").ok());
+    REQUIRE(db->Put("beta", "2").ok());
+    REQUIRE(db->Delete("beta").ok());
+
+    const auto expected = std::vector<std::string>{"alpha", "gamma"};
+    REQUIRE(db->ListKeys() == expected);
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Fold visits key-value pairs in sorted order", "[db]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("gamma", "3").ok());
+    REQUIRE(db->Put("alpha", "1").ok());
+    REQUIRE(db->Put("beta", "2").ok());
+
+    std::vector<Entry> entries;
+    auto status = db->Fold([&entries](std::string_view key, std::string value) {
+        entries.emplace_back(std::string(key), std::move(value));
+        return true;
+    });
+
+    const auto expected = std::vector<Entry>{
+        {"alpha", "1"},
+        {"beta", "2"},
+        {"gamma", "3"},
+    };
+    REQUIRE(status.ok());
+    REQUIRE(entries == expected);
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Fold stops when callback returns false", "[db]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("gamma", "3").ok());
+    REQUIRE(db->Put("alpha", "1").ok());
+    REQUIRE(db->Put("beta", "2").ok());
+
+    std::vector<Entry> entries;
+    auto status = db->Fold([&entries](std::string_view key, std::string value) {
+        entries.emplace_back(std::string(key), std::move(value));
+        return key != "beta";
+    });
+
+    const auto expected = std::vector<Entry>{
+        {"alpha", "1"},
+        {"beta", "2"},
+    };
+    REQUIRE(status.ok());
+    REQUIRE(entries == expected);
 }
