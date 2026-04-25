@@ -44,6 +44,8 @@ namespace bitcask
         virtual bool Delete(absl::string_view key) = 0;
 
         virtual std::unique_ptr<IndexIterator> Iterator(bool reverse = false) const = 0;
+
+        virtual size_t size() const = 0;
     };
 
     std::unique_ptr<Indexer> CreateIndexer(IndexType type);

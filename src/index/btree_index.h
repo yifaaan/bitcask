@@ -23,7 +23,7 @@ namespace bitcask
         bool Delete(absl::string_view key) override;
 
         std::unique_ptr<IndexIterator> Iterator(bool reverse = false) const override;
-
+        size_t size() const override;
     private:
         absl::btree_map<std::string, LogRecordPos> index_;
         mutable std::shared_mutex mutex_;

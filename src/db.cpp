@@ -138,6 +138,18 @@ namespace bitcask
         return absl::OkStatus();
     }
 
+    std::vector<std::string> DB::ListKeys()
+    {
+        auto iter = NewIterator();
+        std::vector<std::string> keys;
+        keys.reserve(index_->size());
+        for (iter->Rewind(); iter->Valid(); iter->Next())
+        {
+            keys.emplace_back(iter->Key());
+        }
+        return keys;
+    }
+
     std::unique_ptr<Iterator> DB::NewIterator(IteratorOptions options)
     {
         std::shared_lock<std::shared_mutex> lock(mutex_);

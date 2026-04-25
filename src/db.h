@@ -39,9 +39,11 @@ namespace bitcask
         std::optional<std::string> Get(absl::string_view key);
         // 删除 key
         absl::Status Delete(absl::string_view key);
+        // 列出所有 key
+        std::vector<std::string> ListKeys();
+
         std::unique_ptr<Iterator> NewIterator(IteratorOptions options = {});
         void Close();
-
     private:
         explicit DB(Options options);
 

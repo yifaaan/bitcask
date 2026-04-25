@@ -156,4 +156,10 @@ namespace bitcask
         return std::make_unique<BTreeIndexIterator>(std::move(items), reverse);
     }
 
+    size_t BTreeIndex::size() const
+    {
+        std::shared_lock lock(mutex_);
+        return index_.size();
+    }
+
 } // namespace bitcask
