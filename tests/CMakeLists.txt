@@ -10,6 +10,7 @@ add_executable(bitcask_tests
     ${CMAKE_SOURCE_DIR}/src/index/btree_index.cpp
     ${CMAKE_SOURCE_DIR}/src/fio/file_io.cpp
     ${CMAKE_SOURCE_DIR}/src/db.cpp
+    ${CMAKE_SOURCE_DIR}/src/iterator.cpp
 )
 
 target_include_directories(bitcask_tests PRIVATE

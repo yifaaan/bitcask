@@ -1,11 +1,15 @@
 #include <catch2/catch_test_macros.hpp>
 #include <filesystem>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "db.h"
 
 namespace
 {
     const auto kTestDir = std::filesystem::temp_directory_path() / "bitcask_test_db";
+    using Entry = std::pair<std::string, std::string>;
 
     struct DBFixture
     {
@@ -19,6 +23,18 @@ namespace
             std::filesystem::remove_all(kTestDir);
         }
     };
+
+    std::vector<Entry> CollectEntries(bitcask::Iterator& iterator)
+    {
+        std::vector<Entry> entries;
+        for (iterator.Rewind(); iterator.Valid(); iterator.Next())
+        {
+            auto value = iterator.Value();
+            REQUIRE(value.has_value());
+            entries.emplace_back(std::string(iterator.Key()), *value);
+        }
+        return entries;
+    }
 } // namespace
 
 TEST_CASE_METHOD(DBFixture, "DB Open creates directory", "[db]")
@@ -147,4 +163,102 @@ TEST_CASE_METHOD(DBFixture, "DB Close and reopen with delete preserves correctly
         REQUIRE(v2.has_value());
         REQUIRE(*v2 == "value2");
     }
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Iterator scans keys and values in sorted order", "[db][iterator]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("gamma", "3").ok());
+    REQUIRE(db->Put("alpha", "1").ok());
+    REQUIRE(db->Put("beta", "2").ok());
+
+    auto iterator = db->NewIterator();
+    REQUIRE(iterator != nullptr);
+
+    const auto expected = std::vector<Entry>{
+        {"alpha", "1"},
+        {"beta", "2"},
+        {"gamma", "3"},
+    };
+    REQUIRE(CollectEntries(*iterator) == expected);
+    REQUIRE_FALSE(iterator->Valid());
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Iterator scans keys and values in reverse order", "[db][iterator]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("gamma", "3").ok());
+    REQUIRE(db->Put("alpha", "1").ok());
+    REQUIRE(db->Put("beta", "2").ok());
+
+    bitcask::IteratorOptions options;
+    options.reverse = true;
+    auto iterator = db->NewIterator(options);
+    REQUIRE(iterator != nullptr);
+
+    const auto expected = std::vector<Entry>{
+        {"gamma", "3"},
+        {"beta", "2"},
+        {"alpha", "1"},
+    };
+    REQUIRE(CollectEntries(*iterator) == expected);
+    REQUIRE_FALSE(iterator->Valid());
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Iterator seek moves to the matching key range", "[db][iterator]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("alpha", "1").ok());
+    REQUIRE(db->Put("beta", "2").ok());
+    REQUIRE(db->Put("delta", "4").ok());
+
+    auto iterator = db->NewIterator();
+    REQUIRE(iterator != nullptr);
+
+    iterator->Seek("bravo");
+    REQUIRE(iterator->Valid());
+    REQUIRE(iterator->Key() == "delta");
+
+    auto value = iterator->Value();
+    REQUIRE(value.has_value());
+    REQUIRE(*value == "4");
+
+    iterator->Seek("zeta");
+    REQUIRE_FALSE(iterator->Valid());
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Iterator filters keys by prefix", "[db][iterator]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("system:1", "ignored").ok());
+    REQUIRE(db->Put("user:1", "alice").ok());
+    REQUIRE(db->Put("user:2", "bob").ok());
+    REQUIRE(db->Put("zone:1", "ignored").ok());
+
+    bitcask::IteratorOptions options;
+    options.prefix = "user:";
+    auto iterator = db->NewIterator(options);
+    REQUIRE(iterator != nullptr);
+
+    const auto expected = std::vector<Entry>{
+        {"user:1", "alice"},
+        {"user:2", "bob"},
+    };
+    REQUIRE(CollectEntries(*iterator) == expected);
+
+    iterator->Seek("user:2");
+    REQUIRE(iterator->Valid());
+    REQUIRE(iterator->Key() == "user:2");
+
+    auto value = iterator->Value();
+    REQUIRE(value.has_value());
+    REQUIRE(*value == "bob");
 }
