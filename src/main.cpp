@@ -17,9 +17,9 @@ int main()
     }
 
     auto status = db->Put("hello", "world");
-    if (!status)
+    if (!status.ok())
     {
-        std::cerr << "Put failed: " << status.message() << '\n';
+        std::cerr << "Put failed: " << status << '\n';
     }
 
     auto value = db->Get("hello");
@@ -29,9 +29,9 @@ int main()
     }
 
     status = db->Put("bitcask", "storage engine");
-    if (!status)
+    if (!status.ok())
     {
-        std::cerr << "Put failed: " << status.message() << '\n';
+        std::cerr << "Put failed: " << status << '\n';
     }
 
     value = db->Get("bitcask");
@@ -41,9 +41,9 @@ int main()
     }
 
     status = db->Delete("hello");
-    if (!status)
+    if (!status.ok())
     {
-        std::cerr << "Delete failed: " << status.message() << '\n';
+        std::cerr << "Delete failed: " << status << '\n';
     }
 
     value = db->Get("hello");

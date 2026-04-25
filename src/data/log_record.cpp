@@ -38,7 +38,7 @@ namespace bitcask
         }
 
         // Calculate and store CRC in little-endian (over everything after the CRC field)
-        uint32_t crc_val = absl::ComputeCrc32c(ToSV(absl::Span<const std::byte>(buf).subspan(4))).value();
+        uint32_t crc_val = static_cast<uint32_t>(absl::ComputeCrc32c(ToSV(absl::Span<const std::byte>(buf).subspan(4))));
         // Store CRC as little-endian, matching Go's binary.LittleEndian.PutUint32
         buf[0] = static_cast<std::byte>(crc_val & 0xFF);
         buf[1] = static_cast<std::byte>((crc_val >> 8) & 0xFF);
@@ -93,7 +93,7 @@ namespace bitcask
             crc_val = absl::ExtendCrc32c(crc_val, ToSV(value_span));
         }
 
-        return crc_val.value();
+        return static_cast<uint32_t>(crc_val);
     }
 
 } // namespace bitcask

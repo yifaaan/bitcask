@@ -338,11 +338,11 @@ namespace bitcask
                 LogRecordPos pos{fid, offset};
                 if (record_opt->type == LogRecordType::kDeleted)
                 {
-                    index_->Delete(record_opt.key);
+                    index_->Delete(record_opt->key);
                 }
                 else
                 {
-                    index_->Put(record_opt.key, pos);
+                    index_->Put(record_opt->key, pos);
                 }
 
                 offset += size;

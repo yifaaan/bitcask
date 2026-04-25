@@ -72,7 +72,7 @@ namespace bitcask
 
             // Read header bytes
             std::vector<std::byte> header_buf(header_max_size);
-            auto read = io->Read(header_buf, offset);
+            auto read = io->Read(absl::MakeSpan(header_buf), offset);
             if (read < 0)
             {
                 return {std::nullopt, 0, false};
@@ -94,7 +94,7 @@ namespace bitcask
             if (key_size > 0 || value_size > 0)
             {
                 std::vector<std::byte> kv_buf(key_size + value_size);
-                auto kv_read = io->Read(kv_buf, offset + hsize);
+                auto kv_read = io->Read(absl::MakeSpan(kv_buf), offset + hsize);
                 if (kv_read != static_cast<int>(key_size + value_size))
                 {
                     return {std::nullopt, 0, false};

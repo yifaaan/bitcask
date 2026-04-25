@@ -54,7 +54,7 @@ TEST_CASE_METHOD(FileIOFixture, "FileIO Write and Read", "[fio]")
     REQUIRE(io->Sync());
 
     std::vector<std::byte> buf(data.size());
-    auto read = io->Read(buf, 0);
+    auto read = io->Read(absl::MakeSpan(buf), 0);
     REQUIRE(read == static_cast<int>(data.size()));
     REQUIRE(std::vector<std::byte>(buf.begin(), buf.end()) == data);
 }
@@ -68,7 +68,7 @@ TEST_CASE_METHOD(FileIOFixture, "FileIO Read at offset", "[fio]")
     io->Write(data);
 
     std::vector<std::byte> buf(3);
-    auto read = io->Read(buf, 5);
+    auto read = io->Read(absl::MakeSpan(buf), 5);
     REQUIRE(read == 3);
     for (auto b : buf)
         REQUIRE(b == std::byte{0xAA});
@@ -83,7 +83,7 @@ TEST_CASE_METHOD(FileIOFixture, "FileIO Read past end", "[fio]")
     io->Write(data);
 
     std::vector<std::byte> buf(100);
-    auto read = io->Read(buf, 0);
+    auto read = io->Read(absl::MakeSpan(buf), 0);
     REQUIRE(read == 2);
 }
 
@@ -103,7 +103,7 @@ TEST_CASE_METHOD(FileIOFixture, "FileIO Append mode", "[fio]")
         io->Write(d2);
 
         std::vector<std::byte> buf(2);
-        auto read = io->Read(buf, 0);
+        auto read = io->Read(absl::MakeSpan(buf), 0);
         REQUIRE(read == 2);
         REQUIRE(buf[0] == std::byte{0x01});
         REQUIRE(buf[1] == std::byte{0x02});
