@@ -150,6 +150,24 @@ namespace bitcask
         return keys;
     }
 
+    absl::Status DB::Fold(std::function<bool(std::string_view, std::string)> f)
+    {
+        auto iter = NewIterator();
+        for (iter->Rewind(); iter->Valid(); iter->Next())
+        {
+            const auto value_opt = iter->Value();
+            if (!value_opt)
+            {
+                return absl::InternalError("Failed to read value during fold");
+            }
+            if (!f(iter->Key(), value_opt.value()))
+            {
+                break;
+            }
+        }
+        return absl::OkStatus();
+    }
+
     std::unique_ptr<Iterator> DB::NewIterator(IteratorOptions options)
     {
         std::shared_lock<std::shared_mutex> lock(mutex_);

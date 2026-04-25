@@ -6,6 +6,7 @@
 #include <absl/status/statusor.h>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <shared_mutex>
@@ -41,6 +42,9 @@ namespace bitcask
         absl::Status Delete(absl::string_view key);
         // 列出所有 key
         std::vector<std::string> ListKeys();
+
+        // 遍历所有 key-value 对，调用 f 进行处理
+        absl::Status Fold(std::function<bool(std::string_view, std::string)> f);
 
         std::unique_ptr<Iterator> NewIterator(IteratorOptions options = {});
         void Close();
