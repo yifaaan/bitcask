@@ -21,14 +21,9 @@ namespace bitcask
         return std::unique_ptr<FileIO>(new FileIO(fd));
     }
 
-    FileIO::FileIO(std::FILE* fd) : fd_(fd)
-    {
-    }
+    FileIO::FileIO(std::FILE* fd) : fd_(fd) {}
 
-    FileIO::~FileIO()
-    {
-        Close();
-    }
+    FileIO::~FileIO() { Close(); }
 
     int FileIO::Read(absl::Span<std::byte> buf, int64_t offset)
     {
@@ -81,9 +76,6 @@ namespace bitcask
         return st.st_size;
     }
 
-    std::unique_ptr<IOManager> CreateIOManager(const std::filesystem::path& path)
-    {
-        return FileIO::Open(path);
-    }
+    std::unique_ptr<IOManager> CreateIOManager(const std::filesystem::path& path) { return FileIO::Open(path); }
 
 } // namespace bitcask

@@ -350,7 +350,7 @@ namespace bitcask
 
             if (i == file_ids_.size() - 1)
             {
-                active_file_->write_offset = offset;
+                active_file_->write_offset = offset; // 更新 活跃数据文件的写入偏移量
             }
         }
 

@@ -57,17 +57,14 @@ namespace bitcask
             auto file_size = io->Size();
             if (file_size < 0)
             {
-                return {std::nullopt, 0, false};
+                return { std::nullopt, 0, false };
             }
 
-            int64_t header_max_size = static_cast<int64_t>(kMaxLogRecordHeaderSize);
+            // header 在文件末尾时，需要调整 header 的最大读取大小，避免越界
+            int64_t header_max_size = kMaxLogRecordHeaderSize;
             if (offset + header_max_size > file_size)
             {
                 header_max_size = file_size - offset;
-            }
-            if (header_max_size <= 0)
-            {
-                return {std::nullopt, 0, true}; // EOF
             }
 
             // Read header bytes
@@ -75,13 +72,13 @@ namespace bitcask
             auto read = io->Read(absl::MakeSpan(header_buf), offset);
             if (read < 0)
             {
-                return {std::nullopt, 0, false};
+                return { std::nullopt, 0, false };
             }
 
             auto [header_opt, hsize] = DecodeLogRecordHeader(header_buf);
             if (!header_opt || (header_opt->crc == 0 && header_opt->key_size == 0 && header_opt->value_size == 0))
             {
-                return {std::nullopt, 0, true}; // EOF
+                return { std::nullopt, 0, true }; // EOF
             }
 
             auto key_size = header_opt->key_size;
@@ -97,7 +94,7 @@ namespace bitcask
                 auto kv_read = io->Read(absl::MakeSpan(kv_buf), offset + hsize);
                 if (kv_read != static_cast<int>(key_size + value_size))
                 {
-                    return {std::nullopt, 0, false};
+                    return { std::nullopt, 0, false };
                 }
 
                 if (key_size > 0)
@@ -113,16 +110,16 @@ namespace bitcask
             // Validate CRC
             if (hsize < 4)
             {
-                return {std::nullopt, 0, true}; // EOF
+                return { std::nullopt, 0, true }; // EOF
             }
             auto header_data = absl::Span<const std::byte>(header_buf).subspan(4, static_cast<size_t>(hsize - 4));
             uint32_t computed_crc = CalcLogRecordCRC(record, header_data);
             if (computed_crc != header_opt->crc)
             {
-                return {std::nullopt, 0, false}; // CRC mismatch
+                return { std::nullopt, 0, false }; // CRC mismatch
             }
 
-            return {record, length, true};
+            return { record, length, true };
         }
     };
 

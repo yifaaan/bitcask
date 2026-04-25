@@ -19,7 +19,7 @@ target_include_directories(bitcask_tests PRIVATE
 
 target_link_libraries(bitcask_tests PRIVATE
     Catch2::Catch2WithMain
-    absl::status absl::crc32c absl::btree absl::strings
+    absl::status absl::crc32c absl::btree absl::strings protobuf::libprotobuf
 )
 
 include(CTest)

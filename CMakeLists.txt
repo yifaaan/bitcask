@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(absl CONFIG REQUIRED)
+find_package(protobuf CONFIG REQUIRED)
 
 add_library(bitcask_lib STATIC
     src/fio/file_io.cpp
@@ -24,7 +25,7 @@ add_library(bitcask_lib STATIC
 target_include_directories(bitcask_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/src
 )
-target_link_libraries(bitcask_lib PUBLIC absl::status absl::crc32c absl::btree absl::strings)
+target_link_libraries(bitcask_lib PUBLIC absl::status absl::crc32c absl::btree absl::strings protobuf::libprotobuf)
 
 add_executable(bitcask_demo src/main.cpp)
 target_link_libraries(bitcask_demo PRIVATE bitcask_lib)

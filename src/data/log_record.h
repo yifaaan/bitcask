@@ -1,15 +1,15 @@
 #pragma once
 
+#include <google/protobuf/io/coded_stream.h>
+#include <absl/crc/crc32c.h>
+#include <absl/types/span.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <utility>
 #include <vector>
-
-#include "absl/types/span.h"
-
-#include "absl/crc/crc32c.h"
+#include <utility>
 
 namespace bitcask
 {
@@ -43,36 +43,21 @@ namespace bitcask
         int64_t value_size = 0;
     };
 
-    // Encode a varint (signed, zigzag-encoded, same as Go's binary.PutVarint)
+    // Encode a varint using protobuf's WriteVarint64ToArray
     inline int PutVarint(absl::Span<std::byte> buf, int64_t value)
     {
-        uint64_t uval = static_cast<uint64_t>(value);
-        int i = 0;
-        while (uval >= 0x80)
-        {
-            buf[i++] = static_cast<std::byte>((uval & 0x7F) | 0x80);
-            uval >>= 7;
-        }
-        buf[i++] = static_cast<std::byte>(uval);
-        return i;
+        auto start = reinterpret_cast<uint8_t*>(buf.data());
+        auto end = google::protobuf::io::CodedOutputStream::WriteVarint64ToArray(static_cast<uint64_t>(value), start);
+        return static_cast<int>(end - start);
     }
 
-    // Decode a varint, returns {value, bytes_read}
+    // Decode a varint using protobuf's CodedInputStream
     inline std::pair<int64_t, int> Varint(absl::Span<const std::byte> buf)
     {
-        uint64_t result = 0;
-        int shift = 0;
-        int i = 0;
-        while (i < static_cast<int>(buf.size()))
-        {
-            auto b = static_cast<uint8_t>(buf[i]);
-            result |= static_cast<uint64_t>(b & 0x7F) << shift;
-            i++;
-            if ((b & 0x80) == 0)
-                break;
-            shift += 7;
-        }
-        return {static_cast<int64_t>(result), i};
+        google::protobuf::io::CodedInputStream stream(reinterpret_cast<const uint8_t*>(buf.data()), buf.size());
+        uint64_t value;
+        stream.ReadVarint64(&value);
+        return { static_cast<int64_t>(value), static_cast<int>(stream.CurrentPosition()) };
     }
 
     // Encode a LogRecord into bytes, returns {encoded_data, total_size}
