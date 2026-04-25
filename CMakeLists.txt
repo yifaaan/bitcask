@@ -21,6 +21,7 @@ add_library(bitcask_lib STATIC
     src/index/btree_index.cpp
     src/db.cpp
     src/iterator.cpp
+    src/batch.cpp
 )
 
 target_include_directories(bitcask_lib PUBLIC

@@ -5,6 +5,7 @@
 #include <absl/status/status.h>
 #include <absl/status/statusor.h>
 
+#include <absl/synchronization/mutex.h>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -21,6 +22,7 @@
 namespace bitcask
 {
 
+    class WriteBatch;
     class DB
     {
     public:
@@ -48,11 +50,15 @@ namespace bitcask
 
         std::unique_ptr<Iterator> NewIterator(IteratorOptions options = {});
         void Close();
+
     private:
         explicit DB(Options options);
 
         friend class Iterator;
-
+        friend class WriteBatch;
+        
+        // 将 LogRecord 写入数据文件，并返回记录的位置，方便更新索引
+        absl::Status APpendLogRecordWithLock(const LogRecord& record, LogRecordPos& pos);
         // 将 LogRecord 写入数据文件，并返回记录的位置，方便更新索引
         absl::Status AppendLogRecord(const LogRecord& record, LogRecordPos& pos);
 
@@ -65,12 +71,13 @@ namespace bitcask
 
         absl::StatusOr<std::string> GetValueByPosition(const LogRecordPos& pos);
 
-        Options options_;
+        Options options_{};
         std::unique_ptr<Indexer> index_;
         std::unique_ptr<DataFile> active_file_;
         absl::btree_map<uint32_t, std::unique_ptr<DataFile>> older_files_;
         std::vector<int> file_ids_;
-        mutable std::shared_mutex mutex_;
+        mutable absl::Mutex mutex_;
+        std::atomic<uint64_t> txn_seq_ = 0; // 事务序列号
     };
 
 } // namespace bitcask

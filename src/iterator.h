@@ -40,6 +40,6 @@ namespace bitcask
 
         DB* db_;
         std::unique_ptr<IndexIterator> index_iter_;
-        IteratorOptions options_;
+        IteratorOptions options_{};
     };
 }

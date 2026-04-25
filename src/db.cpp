@@ -4,6 +4,7 @@
 #include <absl/status/status.h>
 #include <absl/status/statusor.h>
 
+#include <absl/synchronization/mutex.h>
 #include <algorithm>
 #include <filesystem>
 #include <mutex>
@@ -70,7 +71,7 @@ namespace bitcask
         record.type = LogRecordType::kNormal;
 
         LogRecordPos pos;
-        if (auto status = AppendLogRecord(record, pos); !status.ok())
+        if (auto status = APpendLogRecordWithLock(record, pos); !status.ok())
         {
             return status;
         }
@@ -86,7 +87,7 @@ namespace bitcask
 
     std::optional<std::string> DB::Get(absl::string_view key)
     {
-        std::shared_lock lock(mutex_);
+        absl::ReaderMutexLock lock(mutex_);
 
         if (key.empty())
         {
@@ -125,7 +126,7 @@ namespace bitcask
         record.type = LogRecordType::kDeleted;
 
         LogRecordPos pos;
-        if (auto status = AppendLogRecord(record, pos); !status.ok())
+        if (auto status = APpendLogRecordWithLock(record, pos); !status.ok())
         {
             return status;
         }
@@ -170,13 +171,13 @@ namespace bitcask
 
     std::unique_ptr<Iterator> DB::NewIterator(IteratorOptions options)
     {
-        std::shared_lock<std::shared_mutex> lock(mutex_);
+        absl::ReaderMutexLock lock(mutex_);
         return std::make_unique<Iterator>(this, index_->Iterator(options.reverse), options);
     }
 
     void DB::Close()
     {
-        std::unique_lock lock(mutex_);
+        absl::WriterMutexLock lock(mutex_);
         if (active_file_)
         {
             active_file_->Sync();
@@ -185,10 +186,13 @@ namespace bitcask
         older_files_.clear();
     }
 
+    absl::Status  DB::APpendLogRecordWithLock(const LogRecord& record, LogRecordPos& pos)
+    {
+        absl::WriterMutexLock lock(mutex_);
+        return AppendLogRecord(record, pos);
+    }
     absl::Status DB::AppendLogRecord(const LogRecord& record, LogRecordPos& pos)
     {
-        std::unique_lock lock(mutex_);
-
         // 判断当前活跃数据文件是否存在
         if (!active_file_)
         {

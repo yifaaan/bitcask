@@ -18,6 +18,7 @@ namespace bitcask
     {
         kNormal = 0,
         kDeleted = 1,
+        kTxnFinished = 2, // 用于标记一个事务的完成
     };
 
     constexpr size_t kMaxLogRecordHeaderSize = 5 + 2 * 5; // type(1) + 2 * maxVarintLen32(5)

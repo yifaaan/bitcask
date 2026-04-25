@@ -43,7 +43,7 @@ namespace bitcask
     [[nodiscard]] std::optional<std::string> Iterator::Value() const
     {
         auto pos = index_iter_->Value();
-        std::shared_lock<std::shared_mutex> lock(db_->mutex_);
+        absl::ReaderMutexLock lock(db_->mutex_);
         if (auto res = db_->GetValueByPosition(pos); res.ok())
         {
             return res.value();
