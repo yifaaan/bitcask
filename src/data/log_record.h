@@ -34,6 +34,7 @@ namespace bitcask
     {
         uint32_t fid = 0;
         int64_t offset = 0;
+        int64_t size = 0;
     };
 
     struct LogRecordHeader
@@ -56,8 +57,11 @@ namespace bitcask
     inline std::pair<int64_t, int> Varint(absl::Span<const std::byte> buf)
     {
         google::protobuf::io::CodedInputStream stream(reinterpret_cast<const uint8_t*>(buf.data()), buf.size());
-        uint64_t value;
-        stream.ReadVarint64(&value);
+        uint64_t value = 0;
+        if (!stream.ReadVarint64(&value))
+        {
+            return { 0, 0 };
+        }
         return { static_cast<int64_t>(value), static_cast<int>(stream.CurrentPosition()) };
     }
 

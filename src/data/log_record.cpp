@@ -92,10 +92,12 @@ namespace bitcask
 
     std::pair<std::vector<std::byte>, int64_t> EncodeLogRecordPos(const LogRecordPos& pos)
     {
-        std::vector<std::byte> buf(kMaxLogRecordHeaderSize);
+        constexpr size_t kMaxLogRecordPosSize = 30; // fid + offset + size, each encoded as varint64.
+        std::vector<std::byte> buf(kMaxLogRecordPosSize);
         int index = 0;
         index += PutVarint(absl::MakeSpan(buf).subspan(index), static_cast<int64_t>(pos.fid));
         index += PutVarint(absl::MakeSpan(buf).subspan(index), static_cast<int64_t>(pos.offset));
+        index += PutVarint(absl::MakeSpan(buf).subspan(index), pos.size);
         buf.resize(index);
         
         return { std::move(buf), index };
@@ -104,13 +106,31 @@ namespace bitcask
     std::pair<std::optional<LogRecordPos>, int64_t> DecodeLogRecordPos(absl::Span<const std::byte> buf)
     {
         auto [fid, n1] = Varint(buf);
-        auto [offset, n2] = Varint(buf.subspan(n1));
-        if (n1 <= 0 || n2 <= 0)
+        if (n1 <= 0)
         {
             return { std::nullopt, 0 };
         }
-        LogRecordPos pos{ static_cast<uint32_t>(fid), offset };
-        return { pos, static_cast<int64_t>(n1 + n2) };
+        auto [offset, n2] = Varint(buf.subspan(n1));
+        if (n2 <= 0)
+        {
+            return { std::nullopt, 0 };
+        }
+
+        int n3 = 0;
+        int64_t size = 0;
+        if (static_cast<size_t>(n1 + n2) < buf.size())
+        {
+            auto [decoded_size, decoded_n3] = Varint(buf.subspan(n1 + n2));
+            if (decoded_n3 <= 0)
+            {
+                return { std::nullopt, 0 };
+            }
+            size = decoded_size;
+            n3 = decoded_n3;
+        }
+
+        LogRecordPos pos{ static_cast<uint32_t>(fid), offset, size };
+        return { pos, static_cast<int64_t>(n1 + n2 + n3) };
     }
 
 

@@ -67,6 +67,7 @@ namespace bitcask
         }
 
         // 加锁，保证事务提交的串行化
+        {
         absl::WriterMutexLock txn_lock(db_->mutex_);
         // 获取最新的事物序列号
         auto txn_seq = db_->txn_seq_.fetch_add(1) + 1;
@@ -103,25 +104,16 @@ namespace bitcask
         // 更新内存索引
         for (const auto& [key, record] : pending_writes_)
         {
-            if (record.type == LogRecordType::kDeleted)
+            if (auto status = db_->UpdateIndex(key, record.type, positions[key]); !status.ok())
             {
-                if (!db_->index_->Delete(key))
-                {
-                    return absl::InternalError("Failed to update index for key: " + key);
-                }
+                return status;
             }
-            else if (record.type == LogRecordType::kNormal)
-            {
-                if (!db_->index_->Put(key, positions[key]))
-                {
-                    return absl::InternalError("Failed to update index for key: " + key);
-                }
-            }
+        }
         }
 
         pending_writes_.clear();
 
-        return absl::OkStatus();
+        return db_->MaybeAutoMerge();
     }
 
     std::string LogRecordKeyWithSeq(absl::string_view key, uint64_t seq)

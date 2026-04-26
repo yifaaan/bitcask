@@ -35,9 +35,19 @@ namespace bitcask
         std::pair<std::string, uint64_t> ParseLogRecordKey(absl::Span<const std::byte> key)
         {
             google::protobuf::io::CodedInputStream stream(reinterpret_cast<const uint8_t*>(key.data()), key.size());
-            uint64_t value;
+            uint64_t value = 0;
             stream.ReadVarint64(&value);
             return std::make_pair(std::string(reinterpret_cast<const char*>(key.data() + stream.CurrentPosition()), key.size() - stream.CurrentPosition()), value);
+        }
+
+        bool SameLogRecord(const LogRecordPos& lhs, const LogRecordPos& rhs)
+        {
+            return lhs.fid == rhs.fid && lhs.offset == rhs.offset;
+        }
+
+        uint64_t PositiveSize(int64_t size)
+        {
+            return size > 0 ? static_cast<uint64_t>(size) : 0;
         }
 
         // 暂存事务记录，等遇到 txn-finished 记录时再更新索引
@@ -139,6 +149,10 @@ namespace bitcask
         {
             return nullptr;
         }
+        if (options.auto_merge_reclaim_ratio < 0 || options.auto_merge_reclaim_ratio > 1)
+        {
+            return nullptr;
+        }
 
         if (!fs::exists(options.data_dir))
         {
@@ -205,12 +219,12 @@ namespace bitcask
         }
 
         // 更新内存索引
-        if (!index_->Put(key, pos))
+        if (auto status = UpdateIndex(key, LogRecordType::kNormal, pos); !status.ok())
         {
-            return absl::InternalError("Failed to update index after writing log record");
+            return status;
         }
 
-        return absl::OkStatus();
+        return MaybeAutoMerge();
     }
 
     std::optional<std::string> DB::Get(absl::string_view key)
@@ -259,12 +273,12 @@ namespace bitcask
             return status;
         }
 
-        if (!index_->Delete(key))
+        if (auto status = UpdateIndex(key, LogRecordType::kDeleted, pos); !status.ok())
         {
-            return absl::InternalError("Failed to delete key from index");
+            return status;
         }
 
-        return absl::OkStatus();
+        return MaybeAutoMerge();
     }
 
     std::vector<std::string> DB::ListKeys()
@@ -319,6 +333,18 @@ namespace bitcask
     {
         absl::WriterMutexLock lock(mutex_);
         return SyncActiveDataFile().ok();
+    }
+
+    bitcask::Stat DB::Stat() const
+    {
+        absl::ReaderMutexLock lock(mutex_);
+
+        bitcask::Stat stat;
+        stat.key_num = index_->size();
+        stat.data_file_num = older_files_.size() + (active_file_ ? 1 : 0);
+        stat.reclaimable_size = reclaimable_size_;
+        stat.disk_size = CalculateDataDirSize();
+        return stat;
     }
 
     absl::Status DB::APpendLogRecordWithLock(const LogRecord& record, LogRecordPos& pos)
@@ -376,6 +402,7 @@ namespace bitcask
         // 返回记录的位置，方便更新索引
         pos.fid = active_file_->fid;
         pos.offset = write_offset;
+        pos.size = size;
 
         return absl::OkStatus();
     }
@@ -392,6 +419,64 @@ namespace bitcask
         }
         bytes_since_last_sync_ = 0;
         return absl::OkStatus();
+    }
+
+    absl::Status DB::UpdateIndex(absl::string_view key, LogRecordType type, const LogRecordPos& pos)
+    {
+        auto old_pos = index_->Get(key);
+
+        if (type == LogRecordType::kDeleted)
+        {
+            if (old_pos && !index_->Delete(key))
+            {
+                return absl::InternalError("Failed to delete key from index");
+            }
+            if (old_pos && !SameLogRecord(*old_pos, pos))
+            {
+                reclaimable_size_ += PositiveSize(old_pos->size);
+            }
+            reclaimable_size_ += PositiveSize(pos.size);
+            return absl::OkStatus();
+        }
+
+        if (type == LogRecordType::kNormal)
+        {
+            if (!index_->Put(key, pos))
+            {
+                return absl::InternalError("Failed to update index after writing log record");
+            }
+            if (old_pos && !SameLogRecord(*old_pos, pos))
+            {
+                reclaimable_size_ += PositiveSize(old_pos->size);
+            }
+            return absl::OkStatus();
+        }
+
+        return absl::OkStatus();
+    }
+
+    absl::Status DB::MaybeAutoMerge()
+    {
+        if (options_.auto_merge_reclaim_ratio <= 0)
+        {
+            return absl::OkStatus();
+        }
+        if (is_merging_ || fs::exists(GetMergePath()))
+        {
+            return absl::OkStatus();
+        }
+
+        const auto disk_size = CalculateDataDirSize();
+        if (disk_size == 0)
+        {
+            return absl::OkStatus();
+        }
+        const auto ratio = static_cast<double>(reclaimable_size_) / static_cast<double>(disk_size);
+        if (ratio < options_.auto_merge_reclaim_ratio)
+        {
+            return absl::OkStatus();
+        }
+        return Merge();
     }
 
     absl::Status DB::SetActiveDataFile()
@@ -487,23 +572,6 @@ namespace bitcask
             non_merge_file_id = GetNonMergeFileID();
         }
 
-        auto update_index = [this](absl::string_view key, LogRecordType type, const LogRecordPos& pos) {
-            bool ok = false;
-            if (type == LogRecordType::kDeleted)
-            {
-                ok = index_->Delete(key);
-            }
-            else
-            {
-                ok = index_->Put(key, pos);
-            }
-            if (!ok)
-            {
-                return absl::InternalError("Failed to update index for key: " + std::string(key));
-            }
-            return absl::OkStatus();
-        };
-
         // 暂存事务记录，等遇到 txn-finished 记录时再更新索引
         absl::btree_map<uint64_t, std::vector<TransactionRecord>> pending_txn_records;
 
@@ -544,13 +612,13 @@ namespace bitcask
                     return absl::InternalError("Failed to read log record during index load");
                 }
 
-                LogRecordPos pos{ fid, offset };
+                LogRecordPos pos{ fid, offset, size };
                 //  解析 key，获取原始 key 和事务序列号
                 auto [origin_key, txn_seq] = ParseLogRecordKey(absl::MakeConstSpan(reinterpret_cast<const std::byte*>(record_opt->key.data()), record_opt->key.size()));
 
                 if (txn_seq == 0) // 普通记录，直接更新索引
                 {
-                    if (auto status = update_index(origin_key, record_opt->type, pos); !status.ok())
+                    if (auto status = UpdateIndex(origin_key, record_opt->type, pos); !status.ok())
                     {
                         return status;
                     }
@@ -561,7 +629,7 @@ namespace bitcask
                     {
                         for (const auto& [record, pos] : pending_txn_records[txn_seq])
                         {
-                            if (auto status = update_index(record.key, record.type, pos); !status.ok())
+                            if (auto status = UpdateIndex(record.key, record.type, pos); !status.ok())
                             {
                                 return status;
                             }
@@ -590,6 +658,14 @@ namespace bitcask
         }
 
         // 更新全局事务序列号，保证新写入的事务记录 seq 大于当前最大的 seq
+        for (const auto& [_, records] : pending_txn_records)
+        {
+            for (const auto& [record, pos] : records)
+            {
+                reclaimable_size_ += PositiveSize(pos.size);
+            }
+        }
+
         txn_seq_ = CurrentTxnSeq;
         return absl::OkStatus();
     }
@@ -623,6 +699,102 @@ namespace bitcask
         }
 
         return reopen_data_file(active_file_);
+    }
+
+    uint64_t DB::CalculateDataDirSize() const
+    {
+        std::error_code ec;
+        if (!fs::exists(options_.data_dir, ec))
+        {
+            return 0;
+        }
+
+        uint64_t size = 0;
+        for (auto it = fs::directory_iterator(options_.data_dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
+        {
+            std::error_code file_ec;
+            if (it->is_regular_file(file_ec) && !file_ec)
+            {
+                size += static_cast<uint64_t>(fs::file_size(it->path(), file_ec));
+            }
+        }
+
+        // On Windows, file sizes from directory entries may be stale while
+        // the file is open with buffered writes. Add the in-memory write
+        // offset for each data file to reflect unflushed data.
+        if (size == 0)
+        {
+            for (const auto& [_, data_file] : older_files_)
+            {
+                if (data_file)
+                {
+                    size += static_cast<uint64_t>(data_file->write_offset);
+                }
+            }
+            if (active_file_)
+            {
+                size += static_cast<uint64_t>(active_file_->write_offset);
+            }
+        }
+
+        return size;
+    }
+
+    absl::StatusOr<uint64_t> DB::EstimateMergeRequiredSpace(const std::vector<DataFile*>& data_files) const
+    {
+        uint64_t required_space = 0;
+
+        for (auto* data_file : data_files)
+        {
+            int64_t offset = 0;
+            while (true)
+            {
+                auto [record_opt, size, is_eof] = data_file->ReadLogRecord(offset);
+                if (!record_opt)
+                {
+                    if (is_eof)
+                    {
+                        break;
+                    }
+                    return absl::InternalError("Failed to estimate merge space");
+                }
+
+                auto origin_key = ParseLogRecordKey(absl::MakeConstSpan(reinterpret_cast<const std::byte*>(record_opt->key.data()), record_opt->key.size())).first;
+                auto pos = index_->Get(origin_key);
+                if (pos && pos->fid == data_file->fid && pos->offset == offset)
+                {
+                    required_space += PositiveSize(size);
+
+                    auto encoded_pos = EncodeLogRecordPos(*pos).first;
+                    auto hint_record = LogRecord{
+                        .key = origin_key,
+                        .value = std::string(reinterpret_cast<const char*>(encoded_pos.data()), encoded_pos.size()),
+                        .type = LogRecordType::kNormal,
+                    };
+                    auto hint_size = EncodeLogRecord(hint_record).second;
+                    required_space += PositiveSize(hint_size);
+                }
+
+                offset += size;
+            }
+        }
+
+        return required_space;
+    }
+
+    absl::Status DB::EnsureEnoughDiskSpaceForMerge(uint64_t required_space) const
+    {
+        std::error_code ec;
+        auto space_info = fs::space(options_.data_dir, ec);
+        if (ec)
+        {
+            return absl::InternalError("Failed to query disk space before merge");
+        }
+        if (space_info.available < required_space)
+        {
+            return absl::ResourceExhaustedError("Not enough free disk space to run merge");
+        }
+        return absl::OkStatus();
     }
 
     absl::StatusOr<std::string> DB::GetValueByPosition(const LogRecordPos& pos)
@@ -707,6 +879,19 @@ namespace bitcask
                 return absl::InternalError("Failed to remove existing merge directory");
             }
         }
+        auto required_space = EstimateMergeRequiredSpace(to_merge_files);
+        if (!required_space.ok())
+        {
+            is_merging_ = false;
+            return required_space.status();
+        }
+        auto merge_finished_record = LogRecord{ .key = "merge-finished", .value = std::to_string(new_active_file->fid), .type = LogRecordType::kNormal };
+        auto merge_finished_size = EncodeLogRecord(merge_finished_record).second;
+        if (auto status = EnsureEnoughDiskSpaceForMerge(required_space.value() + PositiveSize(merge_finished_size)); !status.ok())
+        {
+            is_merging_ = false;
+            return status;
+        }
         if (!fs::create_directories(merge_path))
         {
             is_merging_ = false;
@@ -718,6 +903,7 @@ namespace bitcask
         merge_options.data_dir = merge_path;
         merge_options.sync_on_write = false; // 合并过程中不需要每次写入都 fsync，等合并完成后再一次性 fsync
         merge_options.bytes_per_sync = 0;
+        merge_options.auto_merge_reclaim_ratio = 0;
         auto merge_db = Open(merge_options);
         if (!merge_db)
         {
@@ -727,6 +913,11 @@ namespace bitcask
 
         // 打开 hint 索引文件
         auto hint_file = OpenHintFile(merge_path);
+        if (!hint_file)
+        {
+            is_merging_ = false;
+            return absl::InternalError("Failed to create hint file");
+        }
         for (auto f : to_merge_files)
         {
             int64_t offset = 0;
@@ -737,6 +928,7 @@ namespace bitcask
                 {
                     if (is_eof)
                         break; // EOF
+                    is_merging_ = false;
                     return absl::InternalError("Failed to read log record during merge");
                 }
                 auto origin_key = ParseLogRecordKey(absl::MakeConstSpan(reinterpret_cast<const std::byte*>(record_opt->key.data()), record_opt->key.size())).first;
@@ -784,7 +976,7 @@ namespace bitcask
         // 存储merge到了哪个文件
         // key="merge-finished"，value=新活跃数据文件的fid，新的active_file并未merge
         auto record = LogRecord{ .key = "merge-finished", .value = std::to_string(new_active_file->fid), .type = LogRecordType::kNormal };
-        auto [encoded_, _] = EncodeLogRecord(record);
+        auto encoded_ = EncodeLogRecord(record).first;
         if (!merge_finished_file->Write(encoded_))
         {
             is_merging_ = false;

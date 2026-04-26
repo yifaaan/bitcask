@@ -181,3 +181,41 @@ TEST_CASE_METHOD(WriteBatchFixture, "WriteBatch honors DB bytes_per_sync when co
     REQUIRE(std::filesystem::exists(data_file));
     REQUIRE(std::filesystem::file_size(data_file) > 0);
 }
+
+TEST_CASE_METHOD(WriteBatchFixture, "WriteBatch put then delete same key tracks reclaimable size", "[write_batch][stat]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+    REQUIRE(db->Put("existing", "value").ok());
+
+    auto before = db->Stat();
+    REQUIRE(before.reclaimable_size == 0);
+
+    bitcask::WriteBatch batch(db.get(), {});
+    REQUIRE(batch.Put("existing", "updated").ok());
+    REQUIRE(batch.Delete("existing").ok());
+    REQUIRE(batch.Commit().ok());
+
+    auto after = db->Stat();
+    REQUIRE(after.key_num == 0);
+    REQUIRE(after.reclaimable_size > before.reclaimable_size);
+    REQUIRE_FALSE(db->Get("existing").has_value());
+}
+
+TEST_CASE_METHOD(WriteBatchFixture, "WriteBatch overwrite of existing key tracks reclaimable", "[write_batch][stat]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+    REQUIRE(db->Put("key", "old").ok());
+
+    bitcask::WriteBatch batch(db.get(), {});
+    REQUIRE(batch.Put("key", "new").ok());
+    REQUIRE(batch.Commit().ok());
+
+    auto stat = db->Stat();
+    REQUIRE(stat.key_num == 1);
+    REQUIRE(stat.reclaimable_size > 0);
+    auto value = db->Get("key");
+    REQUIRE(value.has_value());
+    REQUIRE(*value == "new");
+}

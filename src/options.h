@@ -15,6 +15,7 @@ namespace bitcask
         bool sync_on_write = false;
         IndexType index_type = IndexType::BTree;
         uint64_t bytes_per_sync = 0; // 0 disables periodic sync by written bytes.
+        double auto_merge_reclaim_ratio = 0.0; // 0 disables auto merge; valid range is [0, 1].
     };
 
     // 迭代器选项

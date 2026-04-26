@@ -248,3 +248,196 @@ TEST_CASE_METHOD(MergeFixture, "DB Merge can run repeatedly", "[db][merge]")
     RequireValue(*db, "alpha", "2");
     RequireValue(*db, "beta", "3");
 }
+
+TEST_CASE_METHOD(MergeFixture, "DB auto merge runs when reclaimable ratio reaches threshold", "[db][merge]")
+{
+    auto options = MakeOptions(bitcask::IndexType::BTree);
+    options.auto_merge_reclaim_ratio = 0.01;
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("key", std::string(64, 'a')).ok());
+    REQUIRE_FALSE(std::filesystem::exists(kMergeDir / "merge-finished"));
+
+    REQUIRE(db->Put("key", std::string(64, 'b')).ok());
+    REQUIRE(std::filesystem::exists(kMergeDir / "merge-finished"));
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB auto merge with ART runs when reclaimable ratio reaches threshold", "[db][merge]")
+{
+    auto options = MakeOptions(bitcask::IndexType::ART);
+    options.auto_merge_reclaim_ratio = 0.01;
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("key", std::string(64, 'a')).ok());
+    REQUIRE_FALSE(std::filesystem::exists(kMergeDir / "merge-finished"));
+
+    REQUIRE(db->Put("key", std::string(64, 'b')).ok());
+    REQUIRE(std::filesystem::exists(kMergeDir / "merge-finished"));
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB auto merge does not trigger when disabled", "[db][merge]")
+{
+    auto options = MakeOptions(bitcask::IndexType::BTree);
+    options.auto_merge_reclaim_ratio = 0.0;
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("key", std::string(64, 'a')).ok());
+    REQUIRE(db->Put("key", std::string(64, 'b')).ok());
+    REQUIRE_FALSE(std::filesystem::exists(kMergeDir / "merge-finished"));
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB auto merge skips when merge directory exists after completed merge", "[db][merge]")
+{
+    auto options = MakeOptions(bitcask::IndexType::BTree);
+    options.auto_merge_reclaim_ratio = 0.01;
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    // First write + overwrite triggers auto-merge
+    REQUIRE(db->Put("key", std::string(64, 'a')).ok());
+    REQUIRE(db->Put("key", std::string(64, 'b')).ok());
+    REQUIRE(std::filesystem::exists(kMergeDir / "merge-finished"));
+
+    // Second overwrite should NOT trigger another merge because merge dir still exists
+    REQUIRE(db->Put("key", std::string(64, 'c')).ok());
+    // The merge dir still has the original merge-finished, confirming no new merge started
+    REQUIRE(std::filesystem::exists(kMergeDir / "merge-finished"));
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB Merge estimates required space for data files", "[db][merge]")
+{
+    auto options = MakeOptions(bitcask::IndexType::BTree);
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("persist", std::string(256, 'x')).ok());
+    REQUIRE(db->Put("discard", std::string(256, 'y')).ok());
+    REQUIRE(db->Put("discard", std::string(256, 'z')).ok());
+
+    REQUIRE(db->Merge().ok());
+    REQUIRE(std::filesystem::exists(kMergeDir / "merge-finished"));
+    REQUIRE(std::filesystem::exists(kMergeDir / "hint-index"));
+    // Merged data file exists in the merge directory
+    REQUIRE(std::filesystem::exists(kMergeDir / "000000000.data"));
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB Merge handles hint file after auto-merge reopen", "[db][merge]")
+{
+    auto options = MakeOptions(bitcask::IndexType::BTree);
+    {
+        auto db = bitcask::DB::Open(options);
+        REQUIRE(db != nullptr);
+        REQUIRE(db->Put("key", std::string(80, 'k')).ok());
+        REQUIRE(db->Put("key", std::string(80, 'm')).ok());
+        REQUIRE(db->Merge().ok());
+        REQUIRE(std::filesystem::exists(kMergeDir / "hint-index"));
+    }
+
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+    REQUIRE(std::filesystem::exists(kTestDir / "hint-index"));
+    REQUIRE_FALSE(std::filesystem::exists(kMergeDir));
+    RequireValue(*db, "key", std::string(80, 'm'));
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB Merge preserves index across reopen when hint file exists", "[db][merge]")
+{
+    auto options = MakeOptions(bitcask::IndexType::ART);
+    options.auto_merge_reclaim_ratio = 0.01;
+    {
+        auto db = bitcask::DB::Open(options);
+        REQUIRE(db != nullptr);
+        REQUIRE(db->Put("persistent", "value").ok());
+        REQUIRE(db->Put("transient", "old").ok());
+        REQUIRE(db->Put("transient", "new").ok());
+        REQUIRE(db->Put("persistent", "fresh").ok());
+        REQUIRE(std::filesystem::exists(kMergeDir / "merge-finished"));
+    }
+
+    auto fresh_db = bitcask::DB::Open(options);
+    REQUIRE(fresh_db != nullptr);
+    REQUIRE_FALSE(std::filesystem::exists(kMergeDir));
+    auto keys = fresh_db->ListKeys();
+    REQUIRE(keys.size() == 2);
+    RequireValue(*fresh_db, "persistent", "fresh");
+    RequireValue(*fresh_db, "transient", "new");
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB reclaimable size is zero after reopen with hint file", "[db][merge][stat]")
+{
+    auto options = MakeOptions(bitcask::IndexType::BTree);
+    {
+        auto db = bitcask::DB::Open(options);
+        REQUIRE(db != nullptr);
+        REQUIRE(db->Put("key", "old").ok());
+        REQUIRE(db->Put("key", "new").ok());
+        REQUIRE(db->Merge().ok());
+        db->Close();
+    }
+
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+    REQUIRE(std::filesystem::exists(kTestDir / "hint-index"));
+    auto stat = db->Stat();
+    REQUIRE(stat.reclaimable_size == 0);
+    REQUIRE(stat.key_num == 1);
+    RequireValue(*db, "key", "new");
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB Merge with all unique live records preserves everything", "[db][merge]")
+{
+    auto options = SectionOptions();
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    for (int i = 0; i < 10; ++i)
+    {
+        REQUIRE(db->Put("key" + std::to_string(i), std::to_string(i)).ok());
+    }
+
+    REQUIRE(db->Stat().reclaimable_size == 0);
+    REQUIRE(db->Merge().ok());
+    db->Close();
+
+    db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+    REQUIRE(db->Stat().key_num == 10);
+    for (int i = 0; i < 10; ++i)
+    {
+        RequireValue(*db, "key" + std::to_string(i), std::to_string(i));
+    }
+}
+
+TEST_CASE_METHOD(MergeFixture, "DB Merge with file containing only deleted records", "[db][merge]")
+{
+    auto options = SectionOptions(128);
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    for (int i = 0; i < 8; ++i)
+    {
+        REQUIRE(db->Put("key" + std::to_string(i), std::string(32, 'x')).ok());
+    }
+    REQUIRE(db->Delete("key0").ok());
+    REQUIRE(db->Delete("key1").ok());
+    REQUIRE(db->Delete("key2").ok());
+
+    REQUIRE(db->Stat().reclaimable_size > 0);
+    REQUIRE(db->Merge().ok());
+    db->Close();
+
+    db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+    REQUIRE(db->Stat().reclaimable_size == 0);
+    REQUIRE(db->Stat().key_num == 5);
+    for (int i = 3; i < 8; ++i)
+    {
+        RequireValue(*db, "key" + std::to_string(i), std::string(32, 'x'));
+    }
+    REQUIRE_FALSE(db->Get("key0").has_value());
+    REQUIRE_FALSE(db->Get("key1").has_value());
+    REQUIRE_FALSE(db->Get("key2").has_value());
+}

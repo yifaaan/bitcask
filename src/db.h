@@ -22,6 +22,14 @@
 namespace bitcask
 {
 
+    struct Stat
+    {
+        size_t key_num = 0;
+        size_t data_file_num = 0;
+        uint64_t reclaimable_size = 0;
+        uint64_t disk_size = 0;
+    };
+
     class FileLock;
     class WriteBatch;
     class DB
@@ -52,6 +60,7 @@ namespace bitcask
         std::unique_ptr<Iterator> NewIterator(IteratorOptions options = {});
         void Close();
         bool Sync();
+        bitcask::Stat Stat() const;
 
 
         // 清理无效数据，生成 hint 索引文件
@@ -67,6 +76,8 @@ namespace bitcask
         // 将 LogRecord 写入数据文件，并返回记录的位置，方便更新索引
         absl::Status AppendLogRecord(const LogRecord& record, LogRecordPos& pos);
         absl::Status SyncActiveDataFile();
+        absl::Status UpdateIndex(absl::string_view key, LogRecordType type, const LogRecordPos& pos);
+        absl::Status MaybeAutoMerge();
 
         // 设置当前活跃数据文件
         // 调用该方法时需要持有 mutex_
@@ -75,6 +86,9 @@ namespace bitcask
         absl::Status LoadDataFiles();
         absl::Status LoadIndexFromDataFiles();
         absl::Status ResetDataFilesIO(IOType io_type);
+        uint64_t CalculateDataDirSize() const;
+        absl::StatusOr<uint64_t> EstimateMergeRequiredSpace(const std::vector<DataFile*>& data_files) const;
+        absl::Status EnsureEnoughDiskSpaceForMerge(uint64_t required_space) const;
 
         absl::StatusOr<std::string> GetValueByPosition(const LogRecordPos& pos);
 
@@ -97,6 +111,7 @@ namespace bitcask
         std::vector<int> file_ids_;
         mutable absl::Mutex mutex_;
         uint64_t bytes_since_last_sync_ = 0;
+        uint64_t reclaimable_size_ = 0;
         std::atomic<uint64_t> txn_seq_ = 0; // 当前事务序列号，新事务需要++使用
         bool is_merging_ = false; // 是否正在合并数据文件
     };
