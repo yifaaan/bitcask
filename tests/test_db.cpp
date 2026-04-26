@@ -969,3 +969,90 @@ TEST_CASE_METHOD(DBFixture, "DB auto merge does not trigger when ratio is below 
     REQUIRE(db->Put("key", std::string(128, 'b')).ok());
     REQUIRE_FALSE(std::filesystem::exists(kTestDir / "-merge" / "merge-finished"));
 }
+
+TEST_CASE_METHOD(DBFixture, "DB Backup with empty dest_dir returns error", "[db][backup]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    auto status = db->Backup("");
+    REQUIRE_FALSE(status.ok());
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Backup copies data files and excludes LOCK", "[db][backup]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("key1", "value1").ok());
+    REQUIRE(db->Put("key2", "value2").ok());
+
+    auto backup_dir = kTestDir / "backup";
+    auto status = db->Backup(backup_dir);
+    REQUIRE(status.ok());
+
+    REQUIRE(std::filesystem::exists(backup_dir));
+    REQUIRE_FALSE(std::filesystem::exists(backup_dir / "LOCK"));
+    REQUIRE(std::filesystem::exists(backup_dir / "000000000.data"));
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Backup data is readable from a new DB instance", "[db][backup]")
+{
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+        REQUIRE(db->Put("key1", "value1").ok());
+        REQUIRE(db->Put("key2", "value2").ok());
+        REQUIRE(db->Delete("key1").ok());
+
+        auto backup_dir = kTestDir / "backup";
+        REQUIRE(db->Backup(backup_dir).ok());
+    }
+
+    auto backup_dir = kTestDir / "backup";
+    auto backup_db = bitcask::DB::Open(bitcask::Options{.data_dir = backup_dir});
+    REQUIRE(backup_db != nullptr);
+
+    REQUIRE_FALSE(backup_db->Get("key1").has_value());
+    auto v2 = backup_db->Get("key2");
+    REQUIRE(v2.has_value());
+    REQUIRE(*v2 == "value2");
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Backup overwrites existing backup directory", "[db][backup]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    auto backup_dir = kTestDir / "backup";
+    REQUIRE(db->Put("key1", "value1").ok());
+    REQUIRE(db->Backup(backup_dir).ok());
+
+    REQUIRE(db->Put("key1", "value2").ok());
+    REQUIRE(db->Backup(backup_dir).ok());
+
+    db->Close();
+
+    auto backup_db = bitcask::DB::Open(bitcask::Options{.data_dir = backup_dir});
+    REQUIRE(backup_db != nullptr);
+
+    auto v = backup_db->Get("key1");
+    REQUIRE(v.has_value());
+    REQUIRE(*v == "value2");
+}
+
+TEST_CASE_METHOD(DBFixture, "DB Backup creates destination directory if not exists", "[db][backup]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("key", "value").ok());
+
+    auto backup_dir = kTestDir / "deep" / "nested" / "backup";
+    REQUIRE_FALSE(std::filesystem::exists(backup_dir));
+
+    auto status = db->Backup(backup_dir);
+    REQUIRE(status.ok());
+    REQUIRE(std::filesystem::exists(backup_dir));
+    REQUIRE(std::filesystem::exists(backup_dir / "000000000.data"));
+}
