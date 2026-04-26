@@ -12,12 +12,25 @@
 #include <string>
 #include <utility>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace bitcask
 {
     namespace
     {
+        constexpr auto kDBLockFileName = "LOCK";
+
         // 解析seq+key格式的 key，返回原始 key 和事务序列号
         std::pair<std::string, uint64_t> ParseLogRecordKey(absl::Span<const std::byte> key)
         {
@@ -35,6 +48,80 @@ namespace bitcask
         };
 
         uint64_t CurrentTxnSeq = 0; // 全局事务序列号，每次提交一个事务时递增，非事务写入的记录 seq 为 0
+    }
+
+    class FileLock
+    {
+    public:
+        static std::unique_ptr<FileLock> Acquire(const fs::path& dir_path)
+        {
+            const auto lock_path = dir_path / kDBLockFileName;
+#ifdef _WIN32
+            HANDLE handle = ::CreateFileW(lock_path.wstring().c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (handle == INVALID_HANDLE_VALUE)
+            {
+                return nullptr;
+            }
+            return std::unique_ptr<FileLock>(new FileLock(handle));
+#else
+            int flags = O_RDWR | O_CREAT;
+#ifdef O_CLOEXEC
+            flags |= O_CLOEXEC;
+#endif
+            auto fd = ::open(lock_path.c_str(), flags, 0644);
+            if (fd < 0)
+            {
+                return nullptr;
+            }
+            if (::flock(fd, LOCK_EX | LOCK_NB) != 0)
+            {
+                ::close(fd);
+                return nullptr;
+            }
+            return std::unique_ptr<FileLock>(new FileLock(fd));
+#endif
+        }
+
+        ~FileLock()
+        {
+#ifdef _WIN32
+            if (handle_ != INVALID_HANDLE_VALUE)
+            {
+                ::CloseHandle(handle_);
+                handle_ = INVALID_HANDLE_VALUE;
+            }
+#else
+            if (fd_ >= 0)
+            {
+                ::flock(fd_, LOCK_UN);
+                ::close(fd_);
+                fd_ = -1;
+            }
+#endif
+        }
+
+        FileLock(const FileLock&) = delete;
+        FileLock& operator=(const FileLock&) = delete;
+        FileLock(FileLock&&) = delete;
+        FileLock& operator=(FileLock&&) = delete;
+
+    private:
+#ifdef _WIN32
+        explicit FileLock(HANDLE handle) : handle_(handle)
+        {
+        }
+        HANDLE handle_ = INVALID_HANDLE_VALUE;
+#else
+        explicit FileLock(int fd) : fd_(fd)
+        {
+        }
+        int fd_ = -1;
+#endif
+    };
+
+    DB::~DB()
+    {
+        Close();
     }
 
     DB::DB(Options options) : options_(std::move(options))
@@ -61,7 +148,14 @@ namespace bitcask
             }
         }
 
+        auto lock = FileLock::Acquire(options.data_dir);
+        if (!lock)
+        {
+            return nullptr;
+        }
+
         auto db = std::unique_ptr<DB>(new DB(std::move(options)));
+        db->file_lock_ = std::move(lock);
 
         //  加载merge数据目录, 将merge后的文件移过来
         if (auto status = db->LoadMergeFiles(); !status.ok())
@@ -213,6 +307,7 @@ namespace bitcask
             active_file_.reset();
         }
         older_files_.clear();
+        file_lock_.reset();
     }
 
     bool DB::Sync()
@@ -682,6 +777,10 @@ namespace bitcask
             if (name == "merge-finished")
             {
                 has_merge_finished_file = true;
+            }
+            if (name == kDBLockFileName)
+            {
+                continue;
             }
             merge_file_ids.push_back(name);
         }

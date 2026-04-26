@@ -22,11 +22,12 @@
 namespace bitcask
 {
 
+    class FileLock;
     class WriteBatch;
     class DB
     {
     public:
-        ~DB() = default;
+        ~DB();
 
         DB(const DB&) = delete;
         DB& operator=(const DB&) = delete;
@@ -88,6 +89,7 @@ namespace bitcask
 
         Options options_{};
         std::unique_ptr<Indexer> index_;
+        std::unique_ptr<FileLock> file_lock_;
         std::unique_ptr<DataFile> active_file_;
         absl::btree_map<uint32_t, std::unique_ptr<DataFile>> older_files_;
         std::vector<int> file_ids_;

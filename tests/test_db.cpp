@@ -60,6 +60,20 @@ TEST_CASE_METHOD(DBFixture, "DB Open with empty path returns nullptr", "[db]")
     REQUIRE(db == nullptr);
 }
 
+TEST_CASE_METHOD(DBFixture, "DB Open locks data directory", "[db]")
+{
+    auto options = bitcask::Options{.data_dir = kTestDir};
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    auto second = bitcask::DB::Open(options);
+    REQUIRE(second == nullptr);
+
+    db->Close();
+    second = bitcask::DB::Open(options);
+    REQUIRE(second != nullptr);
+}
+
 TEST_CASE_METHOD(DBFixture, "DB Put and Get", "[db]")
 {
     auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
