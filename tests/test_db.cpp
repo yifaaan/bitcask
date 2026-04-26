@@ -87,6 +87,20 @@ TEST_CASE_METHOD(DBFixture, "DB Put and Get", "[db]")
     REQUIRE(*value == "value1");
 }
 
+TEST_CASE_METHOD(DBFixture, "DB bytes_per_sync flushes written bytes", "[db]")
+{
+    auto options = bitcask::Options{.data_dir = kTestDir};
+    options.bytes_per_sync = 1;
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    REQUIRE(db->Put("key1", "value1").ok());
+
+    const auto data_file = kTestDir / "000000000.data";
+    REQUIRE(std::filesystem::exists(data_file));
+    REQUIRE(std::filesystem::file_size(data_file) > 0);
+}
+
 TEST_CASE_METHOD(DBFixture, "DB Put overwrites existing key", "[db]")
 {
     auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});

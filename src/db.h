@@ -66,6 +66,7 @@ namespace bitcask
         absl::Status APpendLogRecordWithLock(const LogRecord& record, LogRecordPos& pos);
         // 将 LogRecord 写入数据文件，并返回记录的位置，方便更新索引
         absl::Status AppendLogRecord(const LogRecord& record, LogRecordPos& pos);
+        absl::Status SyncActiveDataFile();
 
         // 设置当前活跃数据文件
         // 调用该方法时需要持有 mutex_
@@ -94,6 +95,7 @@ namespace bitcask
         absl::btree_map<uint32_t, std::unique_ptr<DataFile>> older_files_;
         std::vector<int> file_ids_;
         mutable absl::Mutex mutex_;
+        uint64_t bytes_since_last_sync_ = 0;
         std::atomic<uint64_t> txn_seq_ = 0; // 当前事务序列号，新事务需要++使用
         bool is_merging_ = false; // 是否正在合并数据文件
     };

@@ -163,3 +163,21 @@ TEST_CASE_METHOD(WriteBatchFixture, "WriteBatch commit is durable after reopen",
         REQUIRE(*beta == "2");
     }
 }
+
+TEST_CASE_METHOD(WriteBatchFixture, "WriteBatch honors DB bytes_per_sync when commit sync is disabled", "[write_batch]")
+{
+    auto options = bitcask::Options{ .data_dir = kTestDir };
+    options.bytes_per_sync = 1;
+    auto db = bitcask::DB::Open(options);
+    REQUIRE(db != nullptr);
+
+    bitcask::WriteBatchOptions batch_options;
+    batch_options.sync_on_commit = false;
+    auto batch = MakeBatch(*db, batch_options);
+    REQUIRE(batch.Put("alpha", "1").ok());
+    REQUIRE(batch.Commit().ok());
+
+    const auto data_file = kTestDir / "000000000.data";
+    REQUIRE(std::filesystem::exists(data_file));
+    REQUIRE(std::filesystem::file_size(data_file) > 0);
+}

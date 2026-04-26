@@ -303,7 +303,7 @@ namespace bitcask
         absl::WriterMutexLock lock(mutex_);
         if (active_file_)
         {
-            active_file_->Sync();
+            (void)SyncActiveDataFile();
             active_file_.reset();
         }
         older_files_.clear();
@@ -312,12 +312,8 @@ namespace bitcask
 
     bool DB::Sync()
     {
-        absl::ReaderMutexLock lock(mutex_);
-        if (active_file_)
-        {
-            active_file_->Sync();
-        }
-        return true;
+        absl::WriterMutexLock lock(mutex_);
+        return SyncActiveDataFile().ok();
     }
 
     absl::Status DB::APpendLogRecordWithLock(const LogRecord& record, LogRecordPos& pos)
@@ -343,9 +339,9 @@ namespace bitcask
         if (active_file_->write_offset + size > static_cast<int64_t>(options_.max_data_file_size))
         {
             // 先持久化活跃数据文件
-            if (!active_file_->Sync())
+            if (auto status = SyncActiveDataFile(); !status.ok())
             {
-                return absl::InternalError("Failed to sync active data file");
+                return status;
             }
             // 将当前活跃数据文件加入旧数据文件列表
             older_files_[active_file_->fid] = std::move(active_file_);
@@ -363,11 +359,12 @@ namespace bitcask
             return absl::InternalError("Failed to write log record");
         }
 
-        if (options_.sync_on_write)
+        bytes_since_last_sync_ += static_cast<uint64_t>(size);
+        if (options_.sync_on_write || (options_.bytes_per_sync > 0 && bytes_since_last_sync_ >= options_.bytes_per_sync))
         {
-            if (!active_file_->Sync())
+            if (auto status = SyncActiveDataFile(); !status.ok())
             {
-                return absl::InternalError("Failed to sync active data file");
+                return status;
             }
         }
 
@@ -375,6 +372,20 @@ namespace bitcask
         pos.fid = active_file_->fid;
         pos.offset = write_offset;
 
+        return absl::OkStatus();
+    }
+
+    absl::Status DB::SyncActiveDataFile()
+    {
+        if (!active_file_)
+        {
+            return absl::OkStatus();
+        }
+        if (!active_file_->Sync())
+        {
+            return absl::InternalError("Failed to sync active data file");
+        }
+        bytes_since_last_sync_ = 0;
         return absl::OkStatus();
     }
 
@@ -626,10 +637,10 @@ namespace bitcask
             }
             is_merging_ = true;
 
-            if (!active_file_->Sync())
+            if (auto status = SyncActiveDataFile(); !status.ok())
             {
                 is_merging_ = false;
-                return absl::InternalError("Failed to sync active data file");
+                return status;
             }
 
             // 打开新的活跃数据文件
@@ -670,6 +681,7 @@ namespace bitcask
         Options merge_options = options_;
         merge_options.data_dir = merge_path;
         merge_options.sync_on_write = false; // 合并过程中不需要每次写入都 fsync，等合并完成后再一次性 fsync
+        merge_options.bytes_per_sync = 0;
         auto merge_db = Open(merge_options);
         if (!merge_db)
         {

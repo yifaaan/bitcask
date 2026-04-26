@@ -14,6 +14,7 @@ namespace bitcask
         uint64_t max_data_file_size = 1024 * 1024 * 10; // 10MB
         bool sync_on_write = false;
         IndexType index_type = IndexType::BTree;
+        uint64_t bytes_per_sync = 0; // 0 disables periodic sync by written bytes.
     };
 
     // 迭代器选项

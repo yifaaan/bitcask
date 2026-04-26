@@ -67,7 +67,7 @@ namespace bitcask
         }
 
         // 加锁，保证事务提交的串行化
-        absl::ReaderMutexLock txn_lock(db_->mutex_);
+        absl::WriterMutexLock txn_lock(db_->mutex_);
         // 获取最新的事物序列号
         auto txn_seq = db_->txn_seq_.fetch_add(1) + 1;
         absl::btree_map<std::string, LogRecordPos> positions; // 用于记录每个 key 的位置
@@ -95,9 +95,9 @@ namespace bitcask
         // 持久化？
         if (opts_.sync_on_commit && db_->active_file_)
         {
-            if (!db_->active_file_->Sync())
+            if (auto status = db_->SyncActiveDataFile(); !status.ok())
             {
-                return absl::InternalError("Failed to sync active data file on commit");
+                return status;
             }
         }
         // 更新内存索引
