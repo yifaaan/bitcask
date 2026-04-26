@@ -5,12 +5,7 @@ add_executable(bitcask_tests
     test_index.cpp
     test_data_file.cpp
     test_db.cpp
-    ${CMAKE_SOURCE_DIR}/src/data/log_record.cpp
-    ${CMAKE_SOURCE_DIR}/src/index/index.cpp
-    ${CMAKE_SOURCE_DIR}/src/index/btree_index.cpp
-    ${CMAKE_SOURCE_DIR}/src/fio/file_io.cpp
-    ${CMAKE_SOURCE_DIR}/src/db.cpp
-    ${CMAKE_SOURCE_DIR}/src/iterator.cpp
+    test_write_batch.cpp
 )
 
 target_include_directories(bitcask_tests PRIVATE
@@ -19,10 +14,9 @@ target_include_directories(bitcask_tests PRIVATE
 )
 
 target_link_libraries(bitcask_tests PRIVATE
+    bitcask_lib
     Catch2::Catch2WithMain
-    absl::status absl::crc32c absl::btree absl::strings protobuf::libprotobuf
 )
 
-include(CTest)
 include(Catch)
 catch_discover_tests(bitcask_tests)

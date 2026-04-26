@@ -24,10 +24,14 @@ namespace bitcask
         absl::Status Put(absl::string_view key, absl::string_view value);
         absl::Status Delete(absl::string_view key);
         absl::Status Commit();
+
     private:
         WriteBatchOptions opts_;
         absl::Mutex mutex_;
         DB* db_;
         absl::btree_map<std::string, LogRecord> pending_writes_;
     };
+
+    // 将 key 和事务序列号编码成一个新的 key
+    std::string LogRecordKeyWithSeq(absl::string_view key, uint64_t seq);
 }

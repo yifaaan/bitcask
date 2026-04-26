@@ -13,30 +13,6 @@
 
 namespace bitcask
 {
-    namespace
-    {
-        // 将 key 和事务序列号编码成一个新的 key
-        std::vector<std::byte> LogRecordKeyWithSeq(absl::string_view key, uint64_t seq)
-        {
-            constexpr size_t kMaxVarint64Size = 10;
-            std::array<std::byte, kMaxVarint64Size> seq_buf{};
-
-            auto* seq_start = reinterpret_cast<uint8_t*>(seq_buf.data());
-            auto* seq_end = google::protobuf::io::CodedOutputStream::WriteVarint64ToArray(seq, seq_start);
-            const auto seq_size = static_cast<size_t>(seq_end - seq_start);
-
-            std::vector<std::byte> encoded_key;
-            encoded_key.reserve(seq_size + key.size());
-            encoded_key.insert(encoded_key.end(), seq_buf.begin(), seq_buf.begin() + seq_size);
-            if (!key.empty())
-            {
-                const auto* key_begin = reinterpret_cast<const std::byte*>(key.data());
-                encoded_key.insert(encoded_key.end(), key_begin, key_begin + key.size());
-            }
-            return encoded_key;
-        }
-    }
-
     WriteBatch::WriteBatch(DB* db, WriteBatchOptions opts) : db_(db), opts_(std::move(opts))
     {
     }
@@ -69,6 +45,7 @@ namespace bitcask
             {
                 pending_writes_.erase(key);
             }
+            return absl::OkStatus();
         }
         LogRecord record{ .key = std::string(key), .type = LogRecordType::kDeleted };
         pending_writes_[key] = record;
@@ -100,7 +77,7 @@ namespace bitcask
             // 写入数据文件
             LogRecord to_write = record;
             auto encoded_key = LogRecordKeyWithSeq(key, txn_seq);
-            to_write.key = std::string(reinterpret_cast<const char*>(encoded_key.data()), encoded_key.size());
+            to_write.key = encoded_key;
             if (auto res = db_->AppendLogRecord(to_write, positions[key]); !res.ok())
             {
                 return absl::InternalError("Failed to append log record for key: " + key);
@@ -109,7 +86,7 @@ namespace bitcask
 
         // 写入一个特殊的记录，表示一个事务的完成，这样在恢复时可以知道哪些记录是已经提交的，哪些是未提交的
         auto encoded_key = LogRecordKeyWithSeq("txn-finished", txn_seq);
-        LogRecord commit_record{ .key = std::string(reinterpret_cast<const char*>(encoded_key.data()), encoded_key.size()), .type = LogRecordType::kTxnFinished };
+        LogRecord commit_record{ .key = encoded_key, .type = LogRecordType::kTxnFinished };
         LogRecordPos txn_finished_pos;
         if (auto res = db_->AppendLogRecord(commit_record, txn_finished_pos); !res.ok())
         {
@@ -147,4 +124,23 @@ namespace bitcask
         return absl::OkStatus();
     }
 
+    std::string LogRecordKeyWithSeq(absl::string_view key, uint64_t seq)
+    {
+        constexpr size_t kMaxVarint64Size = 10;
+        std::array<std::byte, kMaxVarint64Size> seq_buf{};
+
+        auto* seq_start = reinterpret_cast<uint8_t*>(seq_buf.data());
+        auto* seq_end = google::protobuf::io::CodedOutputStream::WriteVarint64ToArray(seq, seq_start);
+        const auto seq_size = static_cast<size_t>(seq_end - seq_start);
+
+        std::vector<std::byte> encoded_key;
+        encoded_key.reserve(seq_size + key.size());
+        encoded_key.insert(encoded_key.end(), seq_buf.begin(), seq_buf.begin() + seq_size);
+        if (!key.empty())
+        {
+            const auto* key_begin = reinterpret_cast<const std::byte*>(key.data());
+            encoded_key.insert(encoded_key.end(), key_begin, key_begin + key.size());
+        }
+        return std::string(reinterpret_cast<const char*>(encoded_key.data()), encoded_key.size());
+    }
 }

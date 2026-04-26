@@ -70,8 +70,8 @@ TEST_CASE_METHOD(DBFixture, "DB Put overwrites existing key", "[db]")
     auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
     REQUIRE(db != nullptr);
 
-    db->Put("key1", "value1");
-    db->Put("key1", "value2");
+    REQUIRE(db->Put("key1", "value1").ok());
+    REQUIRE(db->Put("key1", "value2").ok());
 
     auto value = db->Get("key1");
     REQUIRE(value.has_value());
@@ -101,7 +101,7 @@ TEST_CASE_METHOD(DBFixture, "DB Delete", "[db]")
     auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
     REQUIRE(db != nullptr);
 
-    db->Put("key1", "value1");
+    REQUIRE(db->Put("key1", "value1").ok());
     auto status = db->Delete("key1");
     REQUIRE(status.ok());
 
@@ -123,8 +123,8 @@ TEST_CASE_METHOD(DBFixture, "DB Close and reopen preserves data", "[db]")
     {
         auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
         REQUIRE(db != nullptr);
-        db->Put("key1", "value1");
-        db->Put("key2", "value2");
+        REQUIRE(db->Put("key1", "value1").ok());
+        REQUIRE(db->Put("key2", "value2").ok());
         db->Close();
     }
 
@@ -147,9 +147,9 @@ TEST_CASE_METHOD(DBFixture, "DB Close and reopen with delete preserves correctly
     {
         auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
         REQUIRE(db != nullptr);
-        db->Put("key1", "value1");
-        db->Put("key2", "value2");
-        db->Delete("key1");
+        REQUIRE(db->Put("key1", "value1").ok());
+        REQUIRE(db->Put("key2", "value2").ok());
+        REQUIRE(db->Delete("key1").ok());
         db->Close();
     }
 

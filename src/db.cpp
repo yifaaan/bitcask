@@ -1,4 +1,6 @@
 #include "db.h"
+#include "batch.h"
+#include "data/log_record.h"
 
 #include <absl/strings/string_view.h>
 #include <absl/status/status.h>
@@ -7,17 +9,33 @@
 #include <absl/synchronization/mutex.h>
 #include <algorithm>
 #include <filesystem>
-#include <mutex>
-#include <shared_mutex>
 #include <string>
 #include <utility>
-
-
 
 namespace fs = std::filesystem;
 
 namespace bitcask
 {
+    namespace
+    {
+        // 解析seq+key格式的 key，返回原始 key 和事务序列号
+        std::pair<std::string, uint64_t> ParseLogRecordKey(absl::Span<const std::byte> key)
+        {
+            google::protobuf::io::CodedInputStream stream(reinterpret_cast<const uint8_t*>(key.data()), key.size());
+            uint64_t value;
+            stream.ReadVarint64(&value);
+            return std::make_pair(std::string(reinterpret_cast<const char*>(key.data() + stream.CurrentPosition()), key.size() - stream.CurrentPosition()), value);
+        }
+
+        // 暂存事务记录，等遇到 txn-finished 记录时再更新索引
+        struct TransactionRecord
+        {
+            LogRecord record;
+            LogRecordPos pos;
+        };
+
+        uint64_t CurrentTxnSeq = 0; // 全局事务序列号，每次提交一个事务时递增，非事务写入的记录 seq 为 0
+    }
 
     DB::DB(Options options) : options_(std::move(options))
     {
@@ -66,7 +84,7 @@ namespace bitcask
         }
 
         LogRecord record;
-        record.key = std::string(key);
+        record.key = LogRecordKeyWithSeq(key, 0); // 非事务写入，seq为0
         record.value = std::string(value);
         record.type = LogRecordType::kNormal;
 
@@ -122,7 +140,7 @@ namespace bitcask
         }
 
         LogRecord record;
-        record.key = std::string(key);
+        record.key = LogRecordKeyWithSeq(key, 0); // 非事务写入，seq为0
         record.type = LogRecordType::kDeleted;
 
         LogRecordPos pos;
@@ -186,7 +204,7 @@ namespace bitcask
         older_files_.clear();
     }
 
-    absl::Status  DB::APpendLogRecordWithLock(const LogRecord& record, LogRecordPos& pos)
+    absl::Status DB::APpendLogRecordWithLock(const LogRecord& record, LogRecordPos& pos)
     {
         absl::WriterMutexLock lock(mutex_);
         return AppendLogRecord(record, pos);
@@ -324,6 +342,26 @@ namespace bitcask
             return absl::OkStatus();
         }
 
+        auto update_index = [this](absl::string_view key, LogRecordType type, const LogRecordPos& pos) {
+            bool ok = false;
+            if (type == LogRecordType::kDeleted)
+            {
+                ok = index_->Delete(key);
+            }
+            else
+            {
+                ok = index_->Put(key, pos);
+            }
+            if (!ok)
+            {
+                return absl::InternalError("Failed to update index for key: " + std::string(key));
+            }
+            return absl::OkStatus();
+        };
+
+        // 暂存事务记录，等遇到 txn-finished 记录时再更新索引
+        absl::btree_map<uint64_t, std::vector<TransactionRecord>> pending_txn_records;
+
         for (size_t i = 0; i < file_ids_.size(); ++i)
         {
             auto fid = static_cast<uint32_t>(file_ids_[i]);
@@ -345,6 +383,7 @@ namespace bitcask
                 return absl::NotFoundError("Data file not found during index load");
             }
 
+            // 先将读到的数据暂存，要判断是否属于同一个事务
             int64_t offset = 0;
             while (true)
             {
@@ -356,14 +395,40 @@ namespace bitcask
                     return absl::InternalError("Failed to read log record during index load");
                 }
 
-                LogRecordPos pos{fid, offset};
-                if (record_opt->type == LogRecordType::kDeleted)
+                LogRecordPos pos{ fid, offset };
+                //  解析 key，获取原始 key 和事务序列号
+                auto [origin_key, txn_seq] = ParseLogRecordKey(absl::MakeConstSpan(reinterpret_cast<const std::byte*>(record_opt->key.data()), record_opt->key.size()));
+
+                if (txn_seq == 0) // 普通记录，直接更新索引
                 {
-                    index_->Delete(record_opt->key);
+                    if (auto status = update_index(origin_key, record_opt->type, pos); !status.ok())
+                    {
+                        return status;
+                    }
                 }
-                else
+                else // 事务记录，暂存起来，等遇到 txn-finished 记录时再更新索引
                 {
-                    index_->Put(record_opt->key, pos);
+                    if (record_opt->type == LogRecordType::kTxnFinished) // 事务完成，对应的txn-seq的记录都可以更新索引了
+                    {
+                        for (const auto& [record, pos] : pending_txn_records[txn_seq])
+                        {
+                            if (auto status = update_index(record.key, record.type, pos); !status.ok())
+                            {
+                                return status;
+                            }
+                        }
+                        pending_txn_records.erase(txn_seq);
+                    }
+                    else // 事务中的记录，暂存起来
+                    {
+                        record_opt->key = origin_key; // 恢复原始 key，方便后续更新索引
+                        pending_txn_records[txn_seq].push_back({ *record_opt, pos });
+                    }
+                }
+
+                if (txn_seq > CurrentTxnSeq)
+                {
+                    CurrentTxnSeq = txn_seq; // 更新全局事务序列号，保证新写入的事务记录 seq 大于当前最大的 seq
                 }
 
                 offset += size;
@@ -375,6 +440,8 @@ namespace bitcask
             }
         }
 
+        // 更新全局事务序列号，保证新写入的事务记录 seq 大于当前最大的 seq
+        txn_seq_ = CurrentTxnSeq;
         return absl::OkStatus();
     }
 

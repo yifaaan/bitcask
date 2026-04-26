@@ -77,7 +77,7 @@ namespace bitcask
         absl::btree_map<uint32_t, std::unique_ptr<DataFile>> older_files_;
         std::vector<int> file_ids_;
         mutable absl::Mutex mutex_;
-        std::atomic<uint64_t> txn_seq_ = 0; // 事务序列号
+        std::atomic<uint64_t> txn_seq_ = 0; // 当前事务序列号，新事务需要++使用
     };
 
 } // namespace bitcask
