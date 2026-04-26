@@ -14,6 +14,7 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(absl CONFIG REQUIRED)
+find_package(httplib CONFIG REQUIRED)
 find_package(protobuf CONFIG REQUIRED)
 find_package(tlx CONFIG REQUIRED)
 
