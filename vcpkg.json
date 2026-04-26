@@ -7,6 +7,7 @@
   "dependencies": [
     "abseil",
     "catch2",
-    "protobuf"
+    "protobuf",
+    "tlx"
   ]
 }

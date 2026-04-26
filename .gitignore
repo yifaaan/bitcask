@@ -8,7 +8,7 @@ out/
 *.suo
 *.sln
 *.vcxproj*
-
+.vscode
 # vcpkg
 vcpkg/
 vcpkg_installed/

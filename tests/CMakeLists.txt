@@ -3,8 +3,10 @@ find_package(Catch2 3 CONFIG REQUIRED)
 add_executable(bitcask_tests
     test_file_io.cpp
     test_index.cpp
+    test_art_index.cpp
     test_data_file.cpp
     test_db.cpp
+    test_merge.cpp
     test_write_batch.cpp
 )
 

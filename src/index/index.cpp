@@ -1,4 +1,5 @@
 #include "index.h"
+#include "art_index.h"
 #include "btree_index.h"
 
 namespace bitcask
@@ -10,6 +11,8 @@ namespace bitcask
         {
         case IndexType::BTree:
             return CreateBTreeIndex();
+        case IndexType::ART:
+            return CreateAdaptiveRadixTreeIndex();
         default:
             return nullptr;
         }
