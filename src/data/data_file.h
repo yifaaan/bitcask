@@ -1,5 +1,7 @@
 #pragma once
 
+#include <absl/status/status.h>
+
 #include <cstdint>
 #include <filesystem>
 #include <format>
@@ -121,6 +123,47 @@ namespace bitcask
 
             return { record, length, true };
         }
+
+        absl::Status AppendHintRecord(absl::string_view key, const LogRecordPos& pos)
+        {
+            auto encoded_pos = EncodeLogRecordPos(pos).first;
+            auto record = LogRecord{ .key = std::string(key), .value = std::string(reinterpret_cast<const char*>(encoded_pos.data()), encoded_pos.size()), .type = LogRecordType::kNormal };
+            auto [encoded_record, _] = EncodeLogRecord(record);
+            if (!Write(encoded_record))
+            {
+                return absl::InternalError("Failed to write hint record");
+            }
+            return absl::OkStatus();
+        }
     };
 
+    inline std::unique_ptr<DataFile> OpenHintFile(const std::filesystem::path& dir_path)
+    {
+        auto filename = dir_path / "hint-index";
+        auto io = CreateIOManager(filename);
+        if (!io)
+        {
+            return nullptr;
+        }
+        auto df = std::make_unique<DataFile>();
+        df->fid = 0; // Hint file typically uses fid 0
+        df->write_offset = 0;
+        df->io = std::move(io);
+        return df;
+    }
+
+    inline std::unique_ptr<DataFile> OpenMergeFinishedFile(const std::filesystem::path& dir_path)
+    {
+        auto filename = dir_path / "merge-finished";
+        auto io = CreateIOManager(filename);
+        if (!io)
+        {
+            return nullptr;
+        }
+        auto df = std::make_unique<DataFile>();
+        df->fid = 0; // Merge finished file typically uses fid 0
+        df->write_offset = 0;
+        df->io = std::move(io);
+        return df;
+    }
 } // namespace bitcask

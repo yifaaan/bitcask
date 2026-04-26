@@ -70,4 +70,7 @@ namespace bitcask
     // Calculate CRC for a log record (same as Go's calcLogRecordCRC)
     uint32_t CalcLogRecordCRC(const LogRecord& record, absl::Span<const std::byte> header);
 
+    std::pair<std::vector<std::byte>, int64_t> EncodeLogRecordPos(const LogRecordPos& pos);
+    std::pair<std::optional<LogRecordPos>, int64_t> DecodeLogRecordPos(absl::Span<const std::byte> buf);
+
 } // namespace bitcask

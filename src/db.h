@@ -50,7 +50,11 @@ namespace bitcask
 
         std::unique_ptr<Iterator> NewIterator(IteratorOptions options = {});
         void Close();
+        bool Sync();
 
+
+        // 清理无效数据，生成 hint 索引文件
+        absl::Status Merge();
     private:
         explicit DB(Options options);
 
@@ -71,6 +75,17 @@ namespace bitcask
 
         absl::StatusOr<std::string> GetValueByPosition(const LogRecordPos& pos);
 
+        // 获取合并数据文件的路径
+        // /tmp/bitcask
+        // /tmp/bitcas-merge
+        std::filesystem::path GetMergePath() const;
+
+        absl::Status LoadMergeFiles();
+
+        uint32_t GetNonMergeFileID() const;
+
+        absl::Status LoadIndexFromHintFile();
+
         Options options_{};
         std::unique_ptr<Indexer> index_;
         std::unique_ptr<DataFile> active_file_;
@@ -78,6 +93,7 @@ namespace bitcask
         std::vector<int> file_ids_;
         mutable absl::Mutex mutex_;
         std::atomic<uint64_t> txn_seq_ = 0; // 当前事务序列号，新事务需要++使用
+        bool is_merging_ = false; // 是否正在合并数据文件
     };
 
 } // namespace bitcask

@@ -63,7 +63,18 @@ namespace bitcask
 
         auto db = std::unique_ptr<DB>(new DB(std::move(options)));
 
+        //  加载merge数据目录, 将merge后的文件移过来
+        if (auto status = db->LoadMergeFiles(); !status.ok())
+        {
+            return nullptr;
+        }
+
         if (auto status = db->LoadDataFiles(); !status.ok())
+        {
+            return nullptr;
+        }
+
+        if (auto status = db->LoadIndexFromHintFile(); !status.ok())
         {
             return nullptr;
         }
@@ -204,6 +215,16 @@ namespace bitcask
         older_files_.clear();
     }
 
+    bool DB::Sync()
+    {
+        absl::ReaderMutexLock lock(mutex_);
+        if (active_file_)
+        {
+            active_file_->Sync();
+        }
+        return true;
+    }
+
     absl::Status DB::APpendLogRecordWithLock(const LogRecord& record, LogRecordPos& pos)
     {
         absl::WriterMutexLock lock(mutex_);
@@ -341,6 +362,15 @@ namespace bitcask
         {
             return absl::OkStatus();
         }
+        // 发生过merge
+        bool has_merge = false;
+        uint32_t non_merge_file_id = 0;
+        auto merge_finish_file = options_.data_dir / "merge-finished";
+        if (fs::exists(merge_finish_file))
+        {
+            has_merge = true;
+            non_merge_file_id = GetNonMergeFileID();
+        }
 
         auto update_index = [this](absl::string_view key, LogRecordType type, const LogRecordPos& pos) {
             bool ok = false;
@@ -365,6 +395,10 @@ namespace bitcask
         for (size_t i = 0; i < file_ids_.size(); ++i)
         {
             auto fid = static_cast<uint32_t>(file_ids_[i]);
+            if (has_merge && fid < non_merge_file_id)
+            {
+                continue; // 发生过merge的情况下，跳过 merge 前的数据文件
+            }
             DataFile* data_file = nullptr;
             if (active_file_ && active_file_->fid == fid)
             {
@@ -474,6 +508,266 @@ namespace bitcask
         }
 
         return record_opt->value;
+    }
+
+    absl::Status DB::Merge()
+    {
+        if (!active_file_)
+        {
+            return absl::OkStatus();
+        }
+
+        DataFile* new_active_file = nullptr;
+        std::vector<DataFile*> to_merge_files;
+        {
+            absl::WriterMutexLock lock(mutex_);
+            if (is_merging_)
+            {
+                return absl::FailedPreconditionError("Merge is already in progress");
+            }
+            is_merging_ = true;
+
+            if (!active_file_->Sync())
+            {
+                is_merging_ = false;
+                return absl::InternalError("Failed to sync active data file");
+            }
+
+            // 打开新的活跃数据文件
+            auto data_file = DataFile::Open(options_.data_dir, active_file_->fid + 1);
+            if (!data_file)
+            {
+                is_merging_ = false;
+                return absl::InternalError("Failed to open data file");
+            }
+            new_active_file = data_file.get();
+            older_files_[active_file_->fid] = std::move(active_file_);
+            active_file_ = std::move(data_file);
+
+            for (const auto& [_, file] : older_files_)
+            {
+                to_merge_files.push_back(file.get());
+            }
+        }
+
+        // 从小到大merge
+        std::ranges::sort(to_merge_files, [](DataFile* a, DataFile* b) { return a->fid < b->fid; });
+        auto merge_path = GetMergePath();
+        if (fs::exists(merge_path))
+        {
+            if (!fs::remove_all(merge_path))
+            {
+                is_merging_ = false;
+                return absl::InternalError("Failed to remove existing merge directory");
+            }
+        }
+        if (!fs::create_directories(merge_path))
+        {
+            is_merging_ = false;
+            return absl::InternalError("Failed to create merge directory");
+        }
+
+        // 打开新的DB实例，数据文件目录指向 merge_path
+        Options merge_options = options_;
+        merge_options.data_dir = merge_path;
+        merge_options.sync_on_write = false; // 合并过程中不需要每次写入都 fsync，等合并完成后再一次性 fsync
+        auto merge_db = Open(merge_options);
+        if (!merge_db)
+        {
+            is_merging_ = false;
+            return absl::InternalError("Failed to open merge DB instance");
+        }
+
+        // 打开 hint 索引文件
+        auto hint_file = OpenHintFile(merge_path);
+        for (auto f : to_merge_files)
+        {
+            int64_t offset = 0;
+            while (true)
+            {
+                auto [record_opt, size, is_eof] = f->ReadLogRecord(offset);
+                if (!record_opt)
+                {
+                    if (is_eof)
+                        break; // EOF
+                    return absl::InternalError("Failed to read log record during merge");
+                }
+                auto origin_key = ParseLogRecordKey(absl::MakeConstSpan(reinterpret_cast<const std::byte*>(record_opt->key.data()), record_opt->key.size())).first;
+                auto pos = index_->Get(origin_key);
+                // 内存索引的pos是最新的
+                if (pos && pos->fid == f->fid && pos->offset == offset) // 只有当记录在内存索引中的位置和当前读取的位置一致时，才认为这条记录是最新的，需要被合并
+                {
+                    // 这里不需要使用事务记录的 seq，数据已经落盘了
+                    record_opt->key = origin_key; // 恢复原始 key，直接写入合并后的数据文件
+                    if (auto res = merge_db->AppendLogRecord(*record_opt, pos.value()); !res.ok())
+                    {
+                        is_merging_ = false;
+                        return absl::InternalError("Failed to append log record during merge");
+                    }
+                    // 写入 hint 索引文件:real key + position
+                    if (auto res = hint_file->AppendHintRecord(origin_key, pos.value()); !res.ok())
+                    {
+                        is_merging_ = false;
+                        return absl::InternalError("Failed to append hint record during merge");
+                    }
+                }
+
+                offset += size;
+            }
+        }
+
+        if (!hint_file->Sync())
+        {
+            is_merging_ = false;
+            return absl::InternalError("Failed to sync hint file after merge");
+        }
+        if (!merge_db->Sync())
+        {
+            is_merging_ = false;
+            return absl::InternalError("Failed to sync active data file after merge");
+        }
+
+        // 标记合并完成的文件，等下次打开数据库时，如果发现 merge-finished 文件存在，就删除旧数据文件，保留合并后的数据文件和 hint 索引文件
+        auto merge_finished_file = OpenMergeFinishedFile(merge_path);
+        if (!merge_finished_file)
+        {
+            is_merging_ = false;
+            return absl::InternalError("Failed to create merge finished file");
+        }
+        // 存储merge到了哪个文件
+        // key="merge-finished"，value=新活跃数据文件的fid，新的active_file并未merge
+        auto record = LogRecord{ .key = "merge-finished", .value = std::to_string(new_active_file->fid), .type = LogRecordType::kNormal };
+        auto [encoded_, _] = EncodeLogRecord(record);
+        if (!merge_finished_file->Write(encoded_))
+        {
+            is_merging_ = false;
+            return absl::InternalError("Failed to write merge finished record");
+        }
+        if (!merge_finished_file->Sync())
+        {
+            is_merging_ = false;
+            return absl::InternalError("Failed to sync merge finished file");
+        }
+        is_merging_ = false;
+        return absl::OkStatus();
+    }
+
+    std::filesystem::path DB::GetMergePath() const
+    {
+        auto merge_dir = options_.data_dir.parent_path() / options_.data_dir.lexically_normal().filename() / "-merge";
+        return merge_dir;
+    }
+
+    absl::Status DB::LoadMergeFiles()
+    {
+        auto merge_path = GetMergePath();
+        if (!fs::exists(merge_path))
+        {
+            return absl::OkStatus();
+        }
+
+        auto dir_entries = fs::directory_iterator(merge_path);
+        bool has_merge_finished_file = false;
+
+        std::vector<std::string> merge_file_ids;
+        for (const auto& entry : dir_entries)
+        {
+            if (!entry.is_regular_file())
+                continue;
+            auto name = entry.path().filename().string();
+            if (name == "merge-finished")
+            {
+                has_merge_finished_file = true;
+            }
+            merge_file_ids.push_back(name);
+        }
+        if (!has_merge_finished_file)
+        {
+            if (!fs::remove_all(merge_path))
+            {
+                return absl::InternalError("Failed to remove merge directory");
+            }
+            return absl::OkStatus();
+        }
+
+        auto non_merge_fid = GetNonMergeFileID();
+        // 删除旧数据文件，保留合并后的数据文件和 hint 索引文件
+        for (uint32_t fid = 0; fid < non_merge_fid; fid++)
+        {
+            auto filename = options_.data_dir / std::format("{:09d}{}", fid, kDataFileNameSuffix);
+            if (fs::exists(filename))
+            {
+                if (!fs::remove(filename))
+                {
+                    return absl::InternalError("Failed to remove old data file after merge");
+                }
+            }
+        }
+
+        // 将合并后的数据文件移动到数据目录下
+        for (const auto& name : merge_file_ids)
+        {
+            auto src = merge_path / name;
+            auto dst = options_.data_dir / name;
+            fs::rename(src, dst);
+        }
+        if (!fs::remove_all(merge_path))
+        {
+            return absl::InternalError("Failed to remove merge directory");
+        }
+        return absl::OkStatus();
+    }
+
+    uint32_t DB::GetNonMergeFileID() const
+    {
+        auto merge_finished_file = OpenMergeFinishedFile(GetMergePath());
+        if (!merge_finished_file)
+        {
+            return 0;
+        }
+        auto [record_opt, _, is_eof] = merge_finished_file->ReadLogRecord(0);
+        if (!record_opt || is_eof)
+        {
+            return 0;
+        }
+        return static_cast<uint32_t>(std::stoul(record_opt->value));
+    }
+
+    absl::Status DB::LoadIndexFromHintFile()
+    {
+        auto hint_file_name = GetMergePath() / "hint-index";
+        if (!fs::exists(hint_file_name))
+        {
+            return absl::OkStatus();
+        }
+        auto hint_file = OpenHintFile(GetMergePath());
+        if (!hint_file)
+        {
+            return absl::InternalError("Failed to open hint file");
+        }
+
+        int64_t offset = 0;
+        while (true)
+        {
+            auto [record_opt, size, is_eof] = hint_file->ReadLogRecord(offset);
+            if (!record_opt)
+            {
+                if (is_eof)
+                    break; // EOF
+                return absl::InternalError("Failed to read log record from hint file");
+            }
+
+            auto [pos_opt, _] = DecodeLogRecordPos(absl::MakeConstSpan(reinterpret_cast<const std::byte*>(record_opt->value.data()), record_opt->value.size()));
+            if (!pos_opt)
+            {
+                return absl::InternalError("Failed to decode log record position from hint file");
+            }
+            if (index_->Put(record_opt->key, pos_opt.value()))
+            {
+                return absl::InternalError("Failed to update index from hint file");
+            }
+            offset += size;
+        }
     }
 
 } // namespace bitcask

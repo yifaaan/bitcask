@@ -90,4 +90,28 @@ namespace bitcask
         return static_cast<uint32_t>(crc_val);
     }
 
+    std::pair<std::vector<std::byte>, int64_t> EncodeLogRecordPos(const LogRecordPos& pos)
+    {
+        std::vector<std::byte> buf(kMaxLogRecordHeaderSize);
+        int index = 0;
+        index += PutVarint(absl::MakeSpan(buf).subspan(index), static_cast<int64_t>(pos.fid));
+        index += PutVarint(absl::MakeSpan(buf).subspan(index), static_cast<int64_t>(pos.offset));
+        buf.resize(index);
+        
+        return { std::move(buf), index };
+    }
+
+    std::pair<std::optional<LogRecordPos>, int64_t> DecodeLogRecordPos(absl::Span<const std::byte> buf)
+    {
+        auto [fid, n1] = Varint(buf);
+        auto [offset, n2] = Varint(buf.subspan(n1));
+        if (n1 <= 0 || n2 <= 0)
+        {
+            return { std::nullopt, 0 };
+        }
+        LogRecordPos pos{ static_cast<uint32_t>(fid), offset };
+        return { pos, static_cast<int64_t>(n1 + n2) };
+    }
+
+
 } // namespace bitcask
