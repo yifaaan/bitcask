@@ -121,7 +121,7 @@ namespace bitcask
                 return { std::nullopt, 0, false }; // CRC mismatch
             }
 
-            return { record, length, true };
+            return { record, length, false };
         }
 
         absl::Status AppendHintRecord(absl::string_view key, const LogRecordPos& pos)

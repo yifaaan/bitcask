@@ -290,6 +290,10 @@ namespace bitcask
         {
             initial_fid = active_file_->fid + 1;
         }
+        else if (!older_files_.empty())
+        {
+            initial_fid = older_files_.rbegin()->first + 1;
+        }
 
         // 打开新的数据文件
         auto data_file = DataFile::Open(options_.data_dir, initial_fid);
@@ -598,7 +602,7 @@ namespace bitcask
                 if (pos && pos->fid == f->fid && pos->offset == offset) // 只有当记录在内存索引中的位置和当前读取的位置一致时，才认为这条记录是最新的，需要被合并
                 {
                     // 这里不需要使用事务记录的 seq，数据已经落盘了
-                    record_opt->key = origin_key; // 恢复原始 key，直接写入合并后的数据文件
+                    record_opt->key = LogRecordKeyWithSeq(origin_key, 0);
                     if (auto res = merge_db->AppendLogRecord(*record_opt, pos.value()); !res.ok())
                     {
                         is_merging_ = false;
@@ -720,7 +724,17 @@ namespace bitcask
 
     uint32_t DB::GetNonMergeFileID() const
     {
-        auto merge_finished_file = OpenMergeFinishedFile(GetMergePath());
+        auto merge_path = GetMergePath();
+        if (!fs::exists(merge_path / "merge-finished"))
+        {
+            merge_path = options_.data_dir;
+        }
+        if (!fs::exists(merge_path / "merge-finished"))
+        {
+            return 0;
+        }
+
+        auto merge_finished_file = OpenMergeFinishedFile(merge_path);
         if (!merge_finished_file)
         {
             return 0;
@@ -735,12 +749,12 @@ namespace bitcask
 
     absl::Status DB::LoadIndexFromHintFile()
     {
-        auto hint_file_name = GetMergePath() / "hint-index";
+        auto hint_file_name = options_.data_dir / "hint-index";
         if (!fs::exists(hint_file_name))
         {
             return absl::OkStatus();
         }
-        auto hint_file = OpenHintFile(GetMergePath());
+        auto hint_file = OpenHintFile(options_.data_dir);
         if (!hint_file)
         {
             return absl::InternalError("Failed to open hint file");
@@ -762,12 +776,13 @@ namespace bitcask
             {
                 return absl::InternalError("Failed to decode log record position from hint file");
             }
-            if (index_->Put(record_opt->key, pos_opt.value()))
+            if (!index_->Put(record_opt->key, pos_opt.value()))
             {
                 return absl::InternalError("Failed to update index from hint file");
             }
             offset += size;
         }
+        return absl::OkStatus();
     }
 
 } // namespace bitcask
