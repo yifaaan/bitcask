@@ -65,6 +65,9 @@ namespace bitcask
 
         // 清理无效数据，生成 hint 索引文件
         absl::Status Merge();
+
+        // 备份数据库目录到指定路径，备份目录中不包含文件锁
+        absl::Status Backup(const std::filesystem::path& dest_dir);
     private:
         explicit DB(Options options);
 

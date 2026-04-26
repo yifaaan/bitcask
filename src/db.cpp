@@ -828,6 +828,56 @@ namespace bitcask
         return record_opt->value;
     }
 
+    absl::Status DB::Backup(const fs::path& dest_dir)
+    {
+        if (dest_dir.empty())
+        {
+            return absl::InvalidArgumentError("Backup destination directory cannot be empty");
+        }
+
+        absl::WriterMutexLock lock(mutex_);
+
+        if (auto status = SyncActiveDataFile(); !status.ok())
+        {
+            return status;
+        }
+
+        std::error_code ec;
+        if (!fs::exists(dest_dir, ec))
+        {
+            if (!fs::create_directories(dest_dir, ec))
+            {
+                return absl::InternalError(std::string("Failed to create backup directory: ") + ec.message());
+            }
+        }
+
+        for (auto it = fs::directory_iterator(options_.data_dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
+        {
+            std::error_code file_ec;
+            if (!it->is_regular_file(file_ec) || file_ec)
+            {
+                continue;
+            }
+            auto filename = it->path().filename().string();
+            if (filename == kDBLockFileName)
+            {
+                continue;
+            }
+            fs::copy_file(it->path(), dest_dir / filename, fs::copy_options::overwrite_existing, file_ec);
+            if (file_ec)
+            {
+                return absl::InternalError(std::string("Failed to copy file ") + filename + ": " + file_ec.message());
+            }
+        }
+
+        if (ec)
+        {
+            return absl::InternalError(std::string("Failed to iterate data directory: ") + ec.message());
+        }
+
+        return absl::OkStatus();
+    }
+
     absl::Status DB::Merge()
     {
         if (!active_file_)
