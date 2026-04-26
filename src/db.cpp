@@ -178,6 +178,11 @@ namespace bitcask
             return nullptr;
         }
 
+        if (auto status = db->ResetDataFilesIO(IOType::Standard); !status.ok())
+        {
+            return nullptr;
+        }
+
         return db;
     }
 
@@ -447,7 +452,7 @@ namespace bitcask
 
         for (size_t i = 0; i < file_ids.size(); ++i)
         {
-            auto data_file = DataFile::Open(options_.data_dir, static_cast<uint32_t>(file_ids[i]));
+            auto data_file = DataFile::Open(options_.data_dir, static_cast<uint32_t>(file_ids[i]), IOType::MMap);
             if (!data_file)
             {
                 return absl::InternalError("Failed to open data file during load");
@@ -587,6 +592,37 @@ namespace bitcask
         // 更新全局事务序列号，保证新写入的事务记录 seq 大于当前最大的 seq
         txn_seq_ = CurrentTxnSeq;
         return absl::OkStatus();
+    }
+
+    absl::Status DB::ResetDataFilesIO(IOType io_type)
+    {
+        auto reopen_data_file = [this, io_type](std::unique_ptr<DataFile>& data_file) -> absl::Status {
+            if (!data_file)
+            {
+                return absl::OkStatus();
+            }
+
+            const auto fid = data_file->fid;
+            const auto write_offset = data_file->write_offset;
+            auto reopened = DataFile::Open(options_.data_dir, fid, io_type);
+            if (!reopened)
+            {
+                return absl::InternalError("Failed to reopen data file");
+            }
+            reopened->write_offset = write_offset;
+            data_file = std::move(reopened);
+            return absl::OkStatus();
+        };
+
+        for (auto& [_, data_file] : older_files_)
+        {
+            if (auto status = reopen_data_file(data_file); !status.ok())
+            {
+                return status;
+            }
+        }
+
+        return reopen_data_file(active_file_);
     }
 
     absl::StatusOr<std::string> DB::GetValueByPosition(const LogRecordPos& pos)
@@ -865,7 +901,7 @@ namespace bitcask
         {
             return absl::OkStatus();
         }
-        auto hint_file = OpenHintFile(options_.data_dir);
+        auto hint_file = OpenHintFile(options_.data_dir, IOType::MMap);
         if (!hint_file)
         {
             return absl::InternalError("Failed to open hint file");

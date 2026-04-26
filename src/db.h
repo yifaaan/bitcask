@@ -74,6 +74,7 @@ namespace bitcask
 
         absl::Status LoadDataFiles();
         absl::Status LoadIndexFromDataFiles();
+        absl::Status ResetDataFilesIO(IOType io_type);
 
         absl::StatusOr<std::string> GetValueByPosition(const LogRecordPos& pos);
 

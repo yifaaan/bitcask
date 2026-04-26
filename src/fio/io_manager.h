@@ -8,6 +8,11 @@
 
 namespace bitcask
 {
+    enum class IOType
+    {
+        Standard,
+        MMap,
+    };
 
     class IOManager
     {
@@ -31,5 +36,6 @@ namespace bitcask
     };
 
     std::unique_ptr<IOManager> CreateIOManager(const std::filesystem::path& path);
+    std::unique_ptr<IOManager> CreateIOManager(const std::filesystem::path& path, IOType io_type);
 
 } // namespace bitcask

@@ -23,10 +23,10 @@ namespace bitcask
         int64_t write_offset = 0;
         std::unique_ptr<IOManager> io;
 
-        static std::unique_ptr<DataFile> Open(const std::filesystem::path& dir_path, uint32_t fid)
+        static std::unique_ptr<DataFile> Open(const std::filesystem::path& dir_path, uint32_t fid, IOType io_type = IOType::Standard)
         {
             auto filename = dir_path / std::format("{:09d}{}", fid, kDataFileNameSuffix);
-            auto io = CreateIOManager(filename);
+            auto io = CreateIOManager(filename, io_type);
             if (!io)
             {
                 return nullptr;
@@ -137,10 +137,10 @@ namespace bitcask
         }
     };
 
-    inline std::unique_ptr<DataFile> OpenHintFile(const std::filesystem::path& dir_path)
+    inline std::unique_ptr<DataFile> OpenHintFile(const std::filesystem::path& dir_path, IOType io_type = IOType::Standard)
     {
         auto filename = dir_path / "hint-index";
-        auto io = CreateIOManager(filename);
+        auto io = CreateIOManager(filename, io_type);
         if (!io)
         {
             return nullptr;
@@ -152,10 +152,10 @@ namespace bitcask
         return df;
     }
 
-    inline std::unique_ptr<DataFile> OpenMergeFinishedFile(const std::filesystem::path& dir_path)
+    inline std::unique_ptr<DataFile> OpenMergeFinishedFile(const std::filesystem::path& dir_path, IOType io_type = IOType::Standard)
     {
         auto filename = dir_path / "merge-finished";
-        auto io = CreateIOManager(filename);
+        auto io = CreateIOManager(filename, io_type);
         if (!io)
         {
             return nullptr;

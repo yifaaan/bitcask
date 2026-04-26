@@ -48,6 +48,8 @@ include(CTest)
 
 add_library(bitcask_lib STATIC
     src/fio/file_io.cpp
+    src/fio/io_manager.cpp
+    src/fio/mmap_io.cpp
     src/data/log_record.cpp
     src/index/index.cpp
     src/index/btree_index.cpp

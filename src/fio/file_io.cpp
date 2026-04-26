@@ -79,6 +79,4 @@ namespace bitcask
         return st.st_size;
     }
 
-    std::unique_ptr<IOManager> CreateIOManager(const std::filesystem::path& path) { return FileIO::Open(path); }
-
 } // namespace bitcask

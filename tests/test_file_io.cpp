@@ -3,6 +3,7 @@
 #include <fstream>
 
 #include "fio/file_io.h"
+#include "fio/mmap_io.h"
 
 namespace
 {
@@ -127,4 +128,77 @@ TEST_CASE_METHOD(FileIOFixture, "FileIO Close", "[fio]")
     REQUIRE(io != nullptr);
     REQUIRE(io->Close());
     REQUIRE(std::filesystem::exists(NewFilePath("close_test.data")));
+}
+
+TEST_CASE_METHOD(FileIOFixture, "MMapIO reads existing file", "[fio][mmap]")
+{
+    auto path = NewFilePath("mmap_read_test.data");
+    {
+        std::ofstream file(path, std::ios::binary);
+        const char data[] = { '\x01', '\x02', '\x03', '\x04' };
+        file.write(data, sizeof(data));
+        REQUIRE(file.good());
+    }
+
+    auto io = bitcask::MMapIO::Open(path);
+    REQUIRE(io != nullptr);
+    REQUIRE(io->Size() == 4);
+
+    std::vector<std::byte> buf(3);
+    auto read = io->Read(absl::MakeSpan(buf), 1);
+    REQUIRE(read == 3);
+    REQUIRE(buf[0] == std::byte{ 0x02 });
+    REQUIRE(buf[1] == std::byte{ 0x03 });
+    REQUIRE(buf[2] == std::byte{ 0x04 });
+}
+
+TEST_CASE_METHOD(FileIOFixture, "MMapIO read past end returns available bytes", "[fio][mmap]")
+{
+    auto path = NewFilePath("mmap_eof_test.data");
+    {
+        std::ofstream file(path, std::ios::binary);
+        const char data[] = { '\x01', '\x02' };
+        file.write(data, sizeof(data));
+        REQUIRE(file.good());
+    }
+
+    auto io = bitcask::MMapIO::Open(path);
+    REQUIRE(io != nullptr);
+
+    std::vector<std::byte> buf(100);
+    auto read = io->Read(absl::MakeSpan(buf), 0);
+    REQUIRE(read == 2);
+}
+
+TEST_CASE_METHOD(FileIOFixture, "MMapIO supports empty files", "[fio][mmap]")
+{
+    auto path = NewFilePath("mmap_empty_test.data");
+    {
+        std::ofstream file(path, std::ios::binary);
+        REQUIRE(file.good());
+    }
+
+    auto io = bitcask::MMapIO::Open(path);
+    REQUIRE(io != nullptr);
+    REQUIRE(io->Size() == 0);
+
+    std::vector<std::byte> buf(1);
+    REQUIRE(io->Read(absl::MakeSpan(buf), 0) == 0);
+}
+
+TEST_CASE_METHOD(FileIOFixture, "MMapIO is read only", "[fio][mmap]")
+{
+    auto path = NewFilePath("mmap_read_only_test.data");
+    {
+        std::ofstream file(path, std::ios::binary);
+        file << 'x';
+        REQUIRE(file.good());
+    }
+
+    auto io = bitcask::MMapIO::Open(path);
+    REQUIRE(io != nullptr);
+
+    std::vector<std::byte> data = { std::byte{ 0x01 } };
+    REQUIRE(io->Write(data) == -1);
+    REQUIRE(io->Sync());
 }
