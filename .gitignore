@@ -12,6 +12,7 @@ out/
 # vcpkg
 vcpkg/
 vcpkg_installed/
+.claude/
 
 # Compiled
 *.o

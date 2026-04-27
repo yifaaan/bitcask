@@ -65,6 +65,8 @@ add_library(bitcask_lib STATIC
     src/iterator.cpp
     src/batch.cpp
     src/types/redis_data_struct.cpp
+
+    src/types/redis_data_struct.cpp
 )
 
 target_include_directories(bitcask_lib PUBLIC
