@@ -13,7 +13,13 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Default to Release build
+if(NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 find_package(absl CONFIG REQUIRED)
+find_package(benchmark CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(protobuf CONFIG REQUIRED)
 find_package(tlx CONFIG REQUIRED)
@@ -58,6 +64,7 @@ add_library(bitcask_lib STATIC
     src/db.cpp
     src/iterator.cpp
     src/batch.cpp
+    src/types/redis_data_struct.cpp
 )
 
 target_include_directories(bitcask_lib PUBLIC
@@ -78,4 +85,5 @@ target_link_libraries(bitcask_http_lib PUBLIC bitcask_lib httplib::httplib)
 add_executable(bitcask_http src/main.cpp)
 target_link_libraries(bitcask_http PRIVATE bitcask_http_lib)
 
+add_subdirectory(benchmarks)
 add_subdirectory(tests)
