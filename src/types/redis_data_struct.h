@@ -60,6 +60,13 @@ namespace bitcask
         //   deletes "user:1"|version|"name"; deletes "user:1" when size is 0.
         absl::Status HDel(absl::string_view key, absl::string_view field);
 
+        // List operations
+        absl::Status LPush(absl::string_view key, absl::string_view value, int64_t ttl = 0);
+        absl::Status RPush(absl::string_view key, absl::string_view value, int64_t ttl = 0);
+        absl::StatusOr<std::string> LPop(absl::string_view key);
+        absl::StatusOr<std::string> RPop(absl::string_view key);
+        absl::StatusOr<int64_t> LLen(absl::string_view key);
+
         // Set operations
         // SAdd stores one member in a set.
         //
@@ -84,7 +91,34 @@ namespace bitcask
         //   deletes "tags"|version|"cpp"|member_size; deletes "tags" when size is 0.
         absl::Status SRem(absl::string_view key, absl::string_view member);
 
+        // Sorted Set operations
+        // ZAdd stores one member score and maintains both member and score indexes.
+        //
+        // Example:
+        //   ZAdd("scores", "alice", 42.0)
+        //   metadata:     "scores" -> [kZSet][ttl][version][size]
+        //   member data:  "scores"|version|"alice" -> score
+        //   score data:   "scores"|version|score|"alice"|member_size -> ""
+        absl::Status ZAdd(absl::string_view key, absl::string_view member, double score, int64_t ttl = 0);
+
+        // ZScore reads one member score by loading metadata first, then using
+        // the metadata version to build "key|version|member".
+        //
+        // Example:
+        //   ZScore("scores", "alice") -> 42.0
+        absl::StatusOr<double> ZScore(absl::string_view key, absl::string_view member);
+
+        // ZRem removes one member from both indexes and updates metadata size in
+        // the same WriteBatch.
+        //
+        // Example:
+        //   ZRem("scores", "alice")
+        //   deletes both ZSet data keys; deletes "scores" when size is 0.
+        absl::Status ZRem(absl::string_view key, absl::string_view member);
+
     private:
+        absl::Status ListPush(absl::string_view key, absl::string_view value, int64_t ttl, bool push_left);
+        absl::StatusOr<std::string> ListPop(absl::string_view key, bool pop_left);
         absl::StatusOr<ValueMetadata> LoadMetadata(absl::string_view key, RedisDataType expected_type);
 
         DB* db_;

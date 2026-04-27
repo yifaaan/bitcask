@@ -1,7 +1,11 @@
 #include <catch2/catch_test_macros.hpp>
+#include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 #include "types/redis_data_struct.h"
 
@@ -512,4 +516,449 @@ TEST_CASE_METHOD(RedisDSFixture, "RedisDS Set survives reopen", "[redis_ds][set]
         REQUIRE(storage.ok());
         REQUIRE(*storage);
     }
+}
+
+// --- Sorted Set ---
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS ZScore returns score after ZAdd", "[redis_ds][zset]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.ZAdd("scores", "alice", 42.5).ok());
+
+    auto score = rds.ZScore("scores", "alice");
+    REQUIRE(score.ok());
+    REQUIRE(*score == 42.5);
+
+    auto missing = rds.ZScore("scores", "bob");
+    REQUIRE_FALSE(missing.ok());
+    REQUIRE(absl::IsNotFound(missing.status()));
+
+    auto type = rds.Type("scores");
+    REQUIRE(type.ok());
+    REQUIRE(*type == bitcask::RedisDataType::kZSet);
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS ZAdd updates existing member score", "[redis_ds][zset]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.ZAdd("scores", "alice", 1.0).ok());
+    REQUIRE(rds.ZAdd("scores", "alice", 2.0).ok());
+
+    auto score = rds.ZScore("scores", "alice");
+    REQUIRE(score.ok());
+    REQUIRE(*score == 2.0);
+
+    REQUIRE(rds.ZRem("scores", "alice").ok());
+    auto type = rds.Type("scores");
+    REQUIRE_FALSE(type.ok());
+    REQUIRE(absl::IsNotFound(type.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS ZRem removes one sorted set member", "[redis_ds][zset]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.ZAdd("scores", "alice", 1.0).ok());
+    REQUIRE(rds.ZAdd("scores", "bob", 2.0).ok());
+
+    REQUIRE(rds.ZRem("scores", "alice").ok());
+
+    auto removed = rds.ZScore("scores", "alice");
+    REQUIRE_FALSE(removed.ok());
+    REQUIRE(absl::IsNotFound(removed.status()));
+
+    auto remaining = rds.ZScore("scores", "bob");
+    REQUIRE(remaining.ok());
+    REQUIRE(*remaining == 2.0);
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS Sorted Set delete isolates old members by version", "[redis_ds][zset]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.ZAdd("scores", "alice", 1.0).ok());
+    REQUIRE(rds.Delete("scores").ok());
+    REQUIRE(rds.ZAdd("scores", "bob", 2.0).ok());
+
+    auto old_member = rds.ZScore("scores", "alice");
+    REQUIRE_FALSE(old_member.ok());
+    REQUIRE(absl::IsNotFound(old_member.status()));
+
+    auto new_member = rds.ZScore("scores", "bob");
+    REQUIRE(new_member.ok());
+    REQUIRE(*new_member == 2.0);
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS Sorted Set rejects string key", "[redis_ds][zset]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.Set("scores", "raw", 0).ok());
+
+    auto zadd = rds.ZAdd("scores", "alice", 1.0);
+    REQUIRE_FALSE(zadd.ok());
+    REQUIRE(absl::IsFailedPrecondition(zadd));
+
+    auto score = rds.ZScore("scores", "alice");
+    REQUIRE_FALSE(score.ok());
+    REQUIRE(absl::IsFailedPrecondition(score.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS Sorted Set with TTL expires metadata and scores", "[redis_ds][zset][ttl]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.ZAdd("scores", "alice", 1.5, 1).ok());
+
+    auto before = rds.ZScore("scores", "alice");
+    REQUIRE(before.ok());
+    REQUIRE(*before == 1.5);
+
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    auto after = rds.ZScore("scores", "alice");
+    REQUIRE_FALSE(after.ok());
+    REQUIRE(absl::IsNotFound(after.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS Sorted Set survives reopen", "[redis_ds][zset]")
+{
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        REQUIRE(rds.ZAdd("scores", "alice", 1.0).ok());
+        REQUIRE(rds.ZAdd("scores", "bob", 2.0).ok());
+    }
+
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        auto alice = rds.ZScore("scores", "alice");
+        REQUIRE(alice.ok());
+        REQUIRE(*alice == 1.0);
+
+        REQUIRE(rds.ZRem("scores", "alice").ok());
+    }
+
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        auto alice = rds.ZScore("scores", "alice");
+        REQUIRE_FALSE(alice.ok());
+        REQUIRE(absl::IsNotFound(alice.status()));
+
+        auto bob = rds.ZScore("scores", "bob");
+        REQUIRE(bob.ok());
+        REQUIRE(*bob == 2.0);
+    }
+}
+
+// --- List ---
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS List push pop and len", "[redis_ds][list]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.LPush("items", "b").ok());
+    REQUIRE(rds.LPush("items", "a").ok());
+    REQUIRE(rds.RPush("items", "c").ok());
+
+    auto len = rds.LLen("items");
+    REQUIRE(len.ok());
+    REQUIRE(*len == 3);
+
+    auto type = rds.Type("items");
+    REQUIRE(type.ok());
+    REQUIRE(*type == bitcask::RedisDataType::kList);
+
+    auto left = rds.LPop("items");
+    REQUIRE(left.ok());
+    REQUIRE(*left == "a");
+
+    auto right = rds.RPop("items");
+    REQUIRE(right.ok());
+    REQUIRE(*right == "c");
+
+    auto last = rds.LPop("items");
+    REQUIRE(last.ok());
+    REQUIRE(*last == "b");
+
+    auto empty_len = rds.LLen("items");
+    REQUIRE(empty_len.ok());
+    REQUIRE(*empty_len == 0);
+
+    auto missing = rds.LPop("items");
+    REQUIRE_FALSE(missing.ok());
+    REQUIRE(absl::IsNotFound(missing.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS List pop returns NotFound for missing key", "[redis_ds][list]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    auto left = rds.LPop("items");
+    REQUIRE_FALSE(left.ok());
+    REQUIRE(absl::IsNotFound(left.status()));
+
+    auto right = rds.RPop("items");
+    REQUIRE_FALSE(right.ok());
+    REQUIRE(absl::IsNotFound(right.status()));
+
+    auto len = rds.LLen("items");
+    REQUIRE(len.ok());
+    REQUIRE(*len == 0);
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS List delete isolates old items by version", "[redis_ds][list]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.RPush("items", "old").ok());
+    REQUIRE(rds.Delete("items").ok());
+    REQUIRE(rds.RPush("items", "new").ok());
+
+    auto value = rds.LPop("items");
+    REQUIRE(value.ok());
+    REQUIRE(*value == "new");
+
+    auto missing = rds.LPop("items");
+    REQUIRE_FALSE(missing.ok());
+    REQUIRE(absl::IsNotFound(missing.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS List rejects string key", "[redis_ds][list]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.Set("items", "raw", 0).ok());
+
+    auto push = rds.RPush("items", "value");
+    REQUIRE_FALSE(push.ok());
+    REQUIRE(absl::IsFailedPrecondition(push));
+
+    auto pop = rds.LPop("items");
+    REQUIRE_FALSE(pop.ok());
+    REQUIRE(absl::IsFailedPrecondition(pop.status()));
+
+    auto len = rds.LLen("items");
+    REQUIRE_FALSE(len.ok());
+    REQUIRE(absl::IsFailedPrecondition(len.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS List with TTL expires metadata and items", "[redis_ds][list][ttl]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.RPush("items", "value", 1).ok());
+
+    auto before = rds.LLen("items");
+    REQUIRE(before.ok());
+    REQUIRE(*before == 1);
+
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    auto after_len = rds.LLen("items");
+    REQUIRE(after_len.ok());
+    REQUIRE(*after_len == 0);
+
+    auto after_pop = rds.LPop("items");
+    REQUIRE_FALSE(after_pop.ok());
+    REQUIRE(absl::IsNotFound(after_pop.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS List survives reopen", "[redis_ds][list]")
+{
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        REQUIRE(rds.RPush("items", "a").ok());
+        REQUIRE(rds.RPush("items", "b").ok());
+    }
+
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        auto first = rds.LPop("items");
+        REQUIRE(first.ok());
+        REQUIRE(*first == "a");
+        REQUIRE(rds.RPush("items", "c").ok());
+    }
+
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        auto second = rds.LPop("items");
+        REQUIRE(second.ok());
+        REQUIRE(*second == "b");
+
+        auto third = rds.LPop("items");
+        REQUIRE(third.ok());
+        REQUIRE(*third == "c");
+    }
+}
+
+// --- Fixed-size Redis numeric encoding ---
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS fixed numeric encoding uses 8 byte fields", "[redis_ds][encoding]")
+{
+    constexpr size_t kFixedIntSize = sizeof(uint64_t);
+    constexpr size_t kTypeSize = 1;
+
+    auto read_uint64 = [](const std::string& data, size_t offset) {
+        uint64_t value = 0;
+        std::memcpy(&value, data.data() + offset, sizeof(value));
+        return value;
+    };
+    auto read_int64 = [&](const std::string& data, size_t offset) {
+        return static_cast<int64_t>(read_uint64(data, offset));
+    };
+
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.Set("raw:string", "value", 0).ok());
+    REQUIRE(rds.HSet("raw:hash", "field", "value").ok());
+    REQUIRE(rds.SAdd("raw:set", "member").ok());
+    REQUIRE(rds.ZAdd("raw:zset", "member", 3.5).ok());
+    REQUIRE(rds.RPush("raw:list", "first").ok());
+
+    auto string_value = db->Get("raw:string");
+    REQUIRE(string_value.has_value());
+    REQUIRE(string_value->size() == kTypeSize + kFixedIntSize + 5);
+    REQUIRE(static_cast<bitcask::RedisDataType>((*string_value)[0]) == bitcask::RedisDataType::kString);
+    REQUIRE(read_int64(*string_value, kTypeSize) == 0);
+
+    auto hash_meta = db->Get("raw:hash");
+    REQUIRE(hash_meta.has_value());
+    REQUIRE(hash_meta->size() == kTypeSize + (3 * kFixedIntSize));
+    REQUIRE(static_cast<bitcask::RedisDataType>((*hash_meta)[0]) == bitcask::RedisDataType::kHash);
+    const auto hash_version = read_int64(*hash_meta, kTypeSize + kFixedIntSize);
+    REQUIRE(hash_version > 0);
+    REQUIRE(read_int64(*hash_meta, kTypeSize + (2 * kFixedIntSize)) == 1);
+
+    auto set_meta = db->Get("raw:set");
+    REQUIRE(set_meta.has_value());
+    REQUIRE(set_meta->size() == kTypeSize + (3 * kFixedIntSize));
+    REQUIRE(static_cast<bitcask::RedisDataType>((*set_meta)[0]) == bitcask::RedisDataType::kSet);
+    const auto set_version = read_int64(*set_meta, kTypeSize + kFixedIntSize);
+    REQUIRE(set_version > 0);
+    REQUIRE(read_int64(*set_meta, kTypeSize + (2 * kFixedIntSize)) == 1);
+
+    auto zset_meta = db->Get("raw:zset");
+    REQUIRE(zset_meta.has_value());
+    REQUIRE(zset_meta->size() == kTypeSize + (3 * kFixedIntSize));
+    REQUIRE(static_cast<bitcask::RedisDataType>((*zset_meta)[0]) == bitcask::RedisDataType::kZSet);
+    const auto zset_version = read_int64(*zset_meta, kTypeSize + kFixedIntSize);
+    REQUIRE(zset_version > 0);
+    REQUIRE(read_int64(*zset_meta, kTypeSize + (2 * kFixedIntSize)) == 1);
+
+    auto list_meta = db->Get("raw:list");
+    REQUIRE(list_meta.has_value());
+    REQUIRE(list_meta->size() == kTypeSize + (5 * kFixedIntSize));
+    REQUIRE(static_cast<bitcask::RedisDataType>((*list_meta)[0]) == bitcask::RedisDataType::kList);
+    const auto list_version = read_int64(*list_meta, kTypeSize + kFixedIntSize);
+    REQUIRE(list_version > 0);
+    REQUIRE(read_int64(*list_meta, kTypeSize + (2 * kFixedIntSize)) == 1);
+    const auto list_head = read_uint64(*list_meta, kTypeSize + (3 * kFixedIntSize));
+    const auto list_tail = read_uint64(*list_meta, kTypeSize + (4 * kFixedIntSize));
+    REQUIRE(list_tail - list_head == 1);
+
+    std::vector<std::string> keys;
+    REQUIRE(db->Fold([&](std::string_view key, std::string) {
+        keys.emplace_back(key);
+        return true;
+    }).ok());
+
+    bool found_hash_data_key = false;
+    bool found_set_data_key = false;
+    bool found_zset_member_data_key = false;
+    bool found_zset_score_data_key = false;
+    bool found_list_data_key = false;
+    for (const auto& key : keys)
+    {
+        if (key.rfind("raw:hash", 0) == 0 && key != "raw:hash")
+        {
+            found_hash_data_key = true;
+            REQUIRE(key.size() == std::string("raw:hash").size() + kFixedIntSize + std::string("field").size());
+            REQUIRE(read_int64(key, std::string("raw:hash").size()) == hash_version);
+        }
+        if (key.rfind("raw:set", 0) == 0 && key != "raw:set")
+        {
+            found_set_data_key = true;
+            REQUIRE(key.size() == std::string("raw:set").size() + kFixedIntSize + std::string("member").size() + kFixedIntSize);
+            REQUIRE(read_int64(key, std::string("raw:set").size()) == set_version);
+            REQUIRE(read_uint64(key, key.size() - kFixedIntSize) == std::string("member").size());
+        }
+        if (key.rfind("raw:zset", 0) == 0 && key != "raw:zset")
+        {
+            const auto raw_zset_size = std::string("raw:zset").size();
+            if (key.size() == raw_zset_size + kFixedIntSize + std::string("member").size())
+            {
+                found_zset_member_data_key = true;
+                REQUIRE(read_int64(key, raw_zset_size) == zset_version);
+                auto value = db->Get(key);
+                REQUIRE(value.has_value());
+                REQUIRE(value->size() == kFixedIntSize);
+            }
+            if (key.size() == raw_zset_size + (3 * kFixedIntSize) + std::string("member").size())
+            {
+                found_zset_score_data_key = true;
+                REQUIRE(read_int64(key, raw_zset_size) == zset_version);
+                REQUIRE(read_uint64(key, key.size() - kFixedIntSize) == std::string("member").size());
+                auto value = db->Get(key);
+                REQUIRE(value.has_value());
+                REQUIRE(value->empty());
+            }
+        }
+        if (key.rfind("raw:list", 0) == 0 && key != "raw:list")
+        {
+            found_list_data_key = true;
+            REQUIRE(key.size() == std::string("raw:list").size() + (2 * kFixedIntSize));
+            REQUIRE(read_int64(key, std::string("raw:list").size()) == list_version);
+            REQUIRE(read_uint64(key, std::string("raw:list").size() + kFixedIntSize) == list_head);
+        }
+    }
+
+    REQUIRE(found_hash_data_key);
+    REQUIRE(found_set_data_key);
+    REQUIRE(found_zset_member_data_key);
+    REQUIRE(found_zset_score_data_key);
+    REQUIRE(found_list_data_key);
 }
