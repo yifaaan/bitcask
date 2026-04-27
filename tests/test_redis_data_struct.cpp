@@ -362,3 +362,154 @@ TEST_CASE_METHOD(RedisDSFixture, "RedisDS Hash survives reopen", "[redis_ds][has
         REQUIRE(*email == "alice@example.com");
     }
 }
+
+// --- Set ---
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS SIsMember returns true after SAdd", "[redis_ds][set]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.SAdd("tags", "cpp").ok());
+
+    auto is_member = rds.SIsMember("tags", "cpp");
+    REQUIRE(is_member.ok());
+    REQUIRE(*is_member);
+
+    auto missing = rds.SIsMember("tags", "go");
+    REQUIRE(missing.ok());
+    REQUIRE_FALSE(*missing);
+
+    auto type = rds.Type("tags");
+    REQUIRE(type.ok());
+    REQUIRE(*type == bitcask::RedisDataType::kSet);
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS SAdd is idempotent for duplicate member", "[redis_ds][set]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.SAdd("tags", "cpp").ok());
+    REQUIRE(rds.SAdd("tags", "cpp").ok());
+
+    REQUIRE(rds.SRem("tags", "cpp").ok());
+    auto type = rds.Type("tags");
+    REQUIRE_FALSE(type.ok());
+    REQUIRE(absl::IsNotFound(type.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS SRem removes one set member", "[redis_ds][set]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.SAdd("tags", "cpp").ok());
+    REQUIRE(rds.SAdd("tags", "storage").ok());
+
+    REQUIRE(rds.SRem("tags", "cpp").ok());
+
+    auto removed = rds.SIsMember("tags", "cpp");
+    REQUIRE(removed.ok());
+    REQUIRE_FALSE(*removed);
+
+    auto remaining = rds.SIsMember("tags", "storage");
+    REQUIRE(remaining.ok());
+    REQUIRE(*remaining);
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS Set delete isolates old members by version", "[redis_ds][set]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.SAdd("tags", "cpp").ok());
+    REQUIRE(rds.Delete("tags").ok());
+    REQUIRE(rds.SAdd("tags", "go").ok());
+
+    auto old_member = rds.SIsMember("tags", "cpp");
+    REQUIRE(old_member.ok());
+    REQUIRE_FALSE(*old_member);
+
+    auto new_member = rds.SIsMember("tags", "go");
+    REQUIRE(new_member.ok());
+    REQUIRE(*new_member);
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS Set rejects string key", "[redis_ds][set]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.Set("tags", "raw", 0).ok());
+
+    auto sadd = rds.SAdd("tags", "cpp");
+    REQUIRE_FALSE(sadd.ok());
+    REQUIRE(absl::IsFailedPrecondition(sadd));
+
+    auto is_member = rds.SIsMember("tags", "cpp");
+    REQUIRE_FALSE(is_member.ok());
+    REQUIRE(absl::IsFailedPrecondition(is_member.status()));
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS Set with TTL expires metadata and members", "[redis_ds][set][ttl]")
+{
+    auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+    REQUIRE(db != nullptr);
+
+    bitcask::RedisDataStruct rds(db.get());
+    REQUIRE(rds.SAdd("tags", "cpp", 1).ok());
+
+    auto before = rds.SIsMember("tags", "cpp");
+    REQUIRE(before.ok());
+    REQUIRE(*before);
+
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+
+    auto after = rds.SIsMember("tags", "cpp");
+    REQUIRE(after.ok());
+    REQUIRE_FALSE(*after);
+}
+
+TEST_CASE_METHOD(RedisDSFixture, "RedisDS Set survives reopen", "[redis_ds][set]")
+{
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        REQUIRE(rds.SAdd("tags", "cpp").ok());
+        REQUIRE(rds.SAdd("tags", "storage").ok());
+    }
+
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        auto cpp = rds.SIsMember("tags", "cpp");
+        REQUIRE(cpp.ok());
+        REQUIRE(*cpp);
+
+        REQUIRE(rds.SRem("tags", "cpp").ok());
+    }
+
+    {
+        auto db = bitcask::DB::Open(bitcask::Options{.data_dir = kTestDir});
+        REQUIRE(db != nullptr);
+
+        bitcask::RedisDataStruct rds(db.get());
+        auto cpp = rds.SIsMember("tags", "cpp");
+        REQUIRE(cpp.ok());
+        REQUIRE_FALSE(*cpp);
+
+        auto storage = rds.SIsMember("tags", "storage");
+        REQUIRE(storage.ok());
+        REQUIRE(*storage);
+    }
+}

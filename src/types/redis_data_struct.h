@@ -7,30 +7,11 @@
 #include <cstdint>
 #include <string>
 
+#include "redis_data_key.h"
 #include "../db.h"
 
 namespace bitcask
 {
-
-    enum class RedisDataType : uint8_t
-    {
-        kString,
-        kHash,
-        kSet,
-        kList,
-        kZSet,
-    };
-    // String value layout: [type(1 byte)][expiry(varint)][raw value]
-    // Hash metadata layout: [type(1 byte)][expiry(varint)][version(varint)][size(varint)]
-    // Hash data key layout: [key][version(varint)][field]
-    // When expiry == 0, the key has no TTL.
-    struct ValueMetadata
-    {
-        RedisDataType type = RedisDataType::kString;
-        int64_t expiry = 0;
-        int64_t version = 0;
-        int64_t size = 0;
-    };
 
     class RedisDataStruct
     {
@@ -79,8 +60,32 @@ namespace bitcask
         //   deletes "user:1"|version|"name"; deletes "user:1" when size is 0.
         absl::Status HDel(absl::string_view key, absl::string_view field);
 
+        // Set operations
+        // SAdd stores one member in a set.
+        //
+        // Example:
+        //   SAdd("tags", "cpp")
+        //   metadata: "tags" -> [kSet][ttl][version][size]
+        //   data:     "tags"|version|"cpp"|member_size -> ""
+        absl::Status SAdd(absl::string_view key, absl::string_view member, int64_t ttl = 0);
+
+        // SIsMember checks one member by loading set metadata first, then using
+        // the metadata version to build "key|version|member|member_size".
+        //
+        // Example:
+        //   SIsMember("tags", "cpp") -> true
+        absl::StatusOr<bool> SIsMember(absl::string_view key, absl::string_view member);
+
+        // SRem removes one member and updates the set metadata size in the
+        // same WriteBatch.
+        //
+        // Example:
+        //   SRem("tags", "cpp")
+        //   deletes "tags"|version|"cpp"|member_size; deletes "tags" when size is 0.
+        absl::Status SRem(absl::string_view key, absl::string_view member);
+
     private:
-        absl::StatusOr<ValueMetadata> LoadHashMetadata(absl::string_view key);
+        absl::StatusOr<ValueMetadata> LoadMetadata(absl::string_view key, RedisDataType expected_type);
 
         DB* db_;
     };
