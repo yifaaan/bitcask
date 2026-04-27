@@ -21,7 +21,7 @@ vcpkg_installed/
 *.lib
 *.so
 *.dylib
-
+bitcask_data/
 # OS
 .DS_Store
 Thumbs.db

@@ -66,7 +66,16 @@ target_include_directories(bitcask_lib PUBLIC
 target_compile_options(bitcask_lib PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
 target_link_libraries(bitcask_lib PUBLIC absl::status absl::crc32c absl::btree absl::strings protobuf::libprotobuf libart tlx)
 
-add_executable(bitcask_demo src/main.cpp)
-target_link_libraries(bitcask_demo PRIVATE bitcask_lib)
+add_library(bitcask_http_lib STATIC
+    src/http_server.cpp
+)
+
+target_include_directories(bitcask_http_lib PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_link_libraries(bitcask_http_lib PUBLIC bitcask_lib httplib::httplib)
+
+add_executable(bitcask_http src/main.cpp)
+target_link_libraries(bitcask_http PRIVATE bitcask_http_lib)
 
 add_subdirectory(tests)
