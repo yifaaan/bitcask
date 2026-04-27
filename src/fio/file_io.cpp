@@ -39,6 +39,14 @@ namespace bitcask
 
     int FileIO::Write(absl::Span<const std::byte> data)
     {
+        std::clearerr(fd_);
+#ifdef _WIN32
+        if (_fseeki64(fd_, 0, SEEK_END) != 0)
+            return -1;
+#else
+        if (fseeko(fd_, 0, SEEK_END) != 0)
+            return -1;
+#endif
         return static_cast<int>(std::fwrite(data.data(), 1, data.size(), fd_));
     }
 

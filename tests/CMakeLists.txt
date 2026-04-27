@@ -9,6 +9,7 @@ add_executable(bitcask_tests
     test_http_server.cpp
     test_merge.cpp
     test_write_batch.cpp
+    test_redis_data_struct.cpp
 )
 
 target_include_directories(bitcask_tests PRIVATE

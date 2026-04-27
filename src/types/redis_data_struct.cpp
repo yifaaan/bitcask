@@ -1,83 +1,232 @@
 #include "redis_data_struct.h"
 
 #include <absl/strings/str_cat.h>
-#include <absl/synchronization/mutex.h>
 
-#include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
-#include <cstring>
-#include <iterator>
-#include <random>
-#include <set>
+#include <cstddef>
+#include <limits>
+
+#include "../batch.h"
 
 namespace bitcask
 {
 
     namespace
     {
-        std::mt19937& GetRng()
+        constexpr int64_t kNanosPerSecond = 1'000'000'000LL;
+
+        void AppendVarint(std::string& dst, int64_t value)
         {
-            thread_local std::mt19937 rng{ std::random_device{}() };
-            return rng;
+            std::array<std::byte, 10> varint_buf{};
+            const int varint_len = PutVarint(
+                absl::Span<std::byte>(varint_buf.data(), varint_buf.size()), value);
+            dst.append(reinterpret_cast<const char*>(varint_buf.data()), varint_len);
         }
 
-        template<typename T>
-        T RandomSelect(const std::unordered_set<T>& set)
+        int64_t CurrentMonotonicTimeNs()
         {
-            std::uniform_int_distribution<size_t> dist(0, set.size() - 1);
-            size_t idx = dist(GetRng());
-            auto it = set.begin();
-            std::advance(it, idx);
-            return *it;
+            const auto now_ns = std::chrono::steady_clock::now().time_since_epoch();
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(now_ns).count();
         }
-    }
 
-    std::string RedisDataStruct::EncodeValue(RedisDataType type, int64_t expiry, absl::string_view value)
+        int64_t ExpiryFromTTL(int64_t ttl)
+        {
+            if (ttl <= 0)
+            {
+                return 0;
+            }
+
+            const auto now = CurrentMonotonicTimeNs();
+            const auto max = std::numeric_limits<int64_t>::max();
+            if (ttl > (max - now) / kNanosPerSecond)
+            {
+                return max;
+            }
+            return now + ttl * kNanosPerSecond;
+        }
+
+        bool IsExpired(int64_t expiry)
+        {
+            return expiry > 0 && CurrentMonotonicTimeNs() >= expiry;
+        }
+
+        int64_t NewHashVersion()
+        {
+            static std::atomic<int64_t> counter{ 1 };
+            const auto now_ns = std::chrono::system_clock::now().time_since_epoch();
+            const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(now_ns).count();
+            const auto next = counter.fetch_add(1, std::memory_order_relaxed);
+            if (now <= std::numeric_limits<int64_t>::max() - next)
+            {
+                return now + next;
+            }
+            return next;
+        }
+
+        struct DecodedValue
+        {
+            ValueMetadata meta;
+            absl::string_view value;
+        };
+
+        // Encodes a typed Redis value stored at the user key.
+        //
+        // String example:
+        //   Set("name", "alice", 0)
+        //   DB key   = "name"
+        //   DB value = [kString][expiry=0]["alice"]
+        std::string EncodeValue(RedisDataType type, int64_t expiry, absl::string_view value)
+        {
+            // Layout: [type(1 byte)][expiry(varint)][value]
+            std::string encoded;
+            encoded.reserve(1 + 10 + value.size());
+            encoded.push_back(static_cast<char>(type));
+            AppendVarint(encoded, expiry);
+            encoded.append(value.data(), value.size());
+
+            return encoded;
+        }
+
+        // Encodes hash metadata stored at the user key.
+        //
+        // Hash example after HSet("user:1", "name", "alice"):
+        //   DB key   = "user:1"
+        //   DB value = [kHash][expiry=0][version=123][size=1]
+        //
+        // The metadata type is the only type discriminator; hash data keys do
+        // not carry a separate prefix.
+        std::string EncodeHashMetadata(const ValueMetadata& meta)
+        {
+            std::string payload;
+            payload.reserve(20);
+            AppendVarint(payload, meta.version);
+            AppendVarint(payload, meta.size);
+            return EncodeValue(RedisDataType::kHash, meta.expiry, payload);
+        }
+
+        // Builds the internal DB key for one hash field.
+        //
+        // Example with version 123:
+        //   HSet("user:1", "name", "alice")
+        //   DB key   = ["user:1"][varint(123)]["name"]
+        //   DB value = "alice"
+        //
+        // The version comes from the metadata at "user:1". Recreating the hash
+        // generates a new version, so old field keys are ignored without
+        // scanning and deleting every old field.
+        std::string EncodeHashDataKey(
+            absl::string_view key,
+            int64_t version,
+            absl::string_view field)
+        {
+            std::string encoded;
+            encoded.reserve(key.size() + 10 + field.size());
+            encoded.append(key.data(), key.size());
+            AppendVarint(encoded, version);
+            encoded.append(field.data(), field.size());
+            return encoded;
+        }
+
+        // Decodes metadata from a stored Redis value.
+        //
+        // String example:
+        //   [kString][expiry=0]["alice"]
+        //   -> meta{type=kString, expiry=0}, value="alice"
+        //
+        // Hash metadata example:
+        //   [kHash][expiry=0][version=123][size=2]
+        //   -> meta{type=kHash, expiry=0, version=123, size=2}
+        absl::StatusOr<DecodedValue> DecodeValue(absl::string_view encoded)
+        {
+            if (encoded.size() < 2)
+            {
+                return absl::DataLossError("Invalid encoded value");
+            }
+
+            DecodedValue decoded;
+            decoded.meta.type = static_cast<RedisDataType>(encoded[0]);
+
+            const auto remaining = absl::Span<const std::byte>(
+                reinterpret_cast<const std::byte*>(encoded.data() + 1),
+                encoded.size() - 1);
+            const auto [expiry, expiry_len] = Varint(remaining);
+            if (expiry_len <= 0)
+            {
+                return absl::DataLossError("Invalid value expiry");
+            }
+
+            decoded.meta.expiry = expiry;
+            decoded.value = encoded.substr(1 + static_cast<size_t>(expiry_len));
+            if (decoded.meta.type != RedisDataType::kHash)
+            {
+                return decoded;
+            }
+
+            const auto hash_payload = absl::Span<const std::byte>(
+                reinterpret_cast<const std::byte*>(decoded.value.data()),
+                decoded.value.size());
+            const auto [version, version_len] = Varint(hash_payload);
+            if (version_len <= 0 || version <= 0)
+            {
+                return absl::DataLossError("Invalid hash metadata version");
+            }
+
+            const auto [size, size_len] = Varint(hash_payload.subspan(version_len));
+            if (size_len <= 0 || size < 0)
+            {
+                return absl::DataLossError("Invalid hash metadata size");
+            }
+
+            decoded.meta.version = version;
+            decoded.meta.size = size;
+            decoded.value = decoded.value.substr(static_cast<size_t>(version_len + size_len));
+            return decoded;
+        }
+    } // namespace
+
+    // Loads and validates hash metadata for a user key.
+    //
+    // Example:
+    //   HGet("user:1", "name")
+    //   1. LoadHashMetadata("user:1") -> version 123
+    //   2. Build ["user:1"][varint(123)]["name"]
+    //   3. Read the field value from DB
+    absl::StatusOr<ValueMetadata> RedisDataStruct::LoadHashMetadata(absl::string_view key)
     {
-        // Layout: [type(1 byte)][expiry(varint)][value]
-        std::array<std::byte, 10> varint_buf{};
-        const int varint_len = PutVarint(
-            absl::Span<std::byte>(varint_buf.data(), varint_buf.size()), expiry);
-
-        std::string encoded;
-        encoded.reserve(1 + varint_len + value.size());
-        encoded.push_back(static_cast<char>(type));
-        encoded.append(reinterpret_cast<const char*>(varint_buf.data()), varint_len);
-        encoded.append(value.data(), value.size());
-
-        return encoded;
-    }
-
-    std::pair<ValueMetadata, absl::string_view> RedisDataStruct::DecodeValueMetadata(
-        absl::string_view encoded)
-    {
-        if (encoded.size() < 2)
+        if (key.empty())
         {
-            return { {}, {} };
+            return absl::InvalidArgumentError("Key cannot be empty");
         }
 
-        ValueMetadata meta;
-        meta.type = static_cast<RedisDataType>(encoded[0]);
+        auto encoded = db_->Get(key);
+        if (!encoded.has_value())
+        {
+            return absl::NotFoundError(absl::StrCat("Key not found: ", key));
+        }
 
-        const auto remaining = absl::Span<const std::byte>(
-            reinterpret_cast<const std::byte*>(encoded.data() + 1),
-            encoded.size() - 1);
-        const auto [expiry, varint_len] = Varint(remaining);
-        meta.expiry = expiry;
+        auto decoded = DecodeValue(*encoded);
+        if (!decoded.ok())
+        {
+            return decoded.status();
+        }
+        if (IsExpired(decoded->meta.expiry))
+        {
+            (void)db_->Delete(key);
+            return absl::NotFoundError(absl::StrCat("Key expired: ", key));
+        }
+        if (decoded->meta.type != RedisDataType::kHash)
+        {
+            return absl::FailedPreconditionError(absl::StrCat("Wrong type for key: ", key));
+        }
 
-        const auto value_offset = 1 + static_cast<size_t>(varint_len);
-        return { meta, encoded.substr(value_offset) };
+        return decoded->meta;
     }
 
     absl::Status RedisDataStruct::Set(absl::string_view key, absl::string_view value, int64_t ttl)
     {
-        int64_t expiry = 0;
-        if (ttl > 0)
-        {
-            const auto now_ns = std::chrono::steady_clock::now().time_since_epoch();
-            expiry = std::chrono::duration_cast<std::chrono::nanoseconds>(now_ns).count() + ttl * 1'000'000'000LL;
-        }
+        const auto expiry = ExpiryFromTTL(ttl);
 
         return db_->Put(key, EncodeValue(RedisDataType::kString, expiry, value));
     }
@@ -90,30 +239,28 @@ namespace bitcask
             return absl::NotFoundError(absl::StrCat("Key not found: ", key));
         }
 
-        const auto [meta, raw_value] = DecodeValueMetadata(*encoded);
-
-        if (meta.expiry > 0)
+        auto decoded = DecodeValue(*encoded);
+        if (!decoded.ok())
         {
-            const auto now_ns = std::chrono::steady_clock::now().time_since_epoch();
-            const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(now_ns).count();
-            if (now >= meta.expiry)
-            {
-                // Best-effort cleanup of expired key
-                db_->Delete(key);
-                return absl::NotFoundError(absl::StrCat("Key expired: ", key));
-            }
+            return decoded.status();
         }
 
-        return std::string(raw_value);
+        if (IsExpired(decoded->meta.expiry))
+        {
+            // Best-effort cleanup of expired key
+            (void)db_->Delete(key);
+            return absl::NotFoundError(absl::StrCat("Key expired: ", key));
+        }
+        if (decoded->meta.type != RedisDataType::kString)
+        {
+            return absl::FailedPreconditionError(absl::StrCat("Wrong type for key: ", key));
+        }
+
+        return std::string(decoded->value);
     }
 
     absl::Status RedisDataStruct::Delete(absl::string_view key)
     {
-        auto encoded = db_->Get(key);
-        if (!encoded.has_value())
-        {
-            return absl::NotFoundError(absl::StrCat("Key not found: ", key));
-        }
         return db_->Delete(key);
     }
 
@@ -125,20 +272,140 @@ namespace bitcask
             return absl::NotFoundError(absl::StrCat("Key not found: ", key));
         }
 
-        const auto [meta, raw_value] = DecodeValueMetadata(*encoded);
-
-        if (meta.expiry > 0)
+        auto decoded = DecodeValue(*encoded);
+        if (!decoded.ok())
         {
-            const auto now_ns = std::chrono::steady_clock::now().time_since_epoch();
-            const auto now = std::chrono::duration_cast<std::chrono::nanoseconds>(now_ns).count();
-            if (now >= meta.expiry)
+            return decoded.status();
+        }
+
+        if (IsExpired(decoded->meta.expiry))
+        {
+            (void)db_->Delete(key);
+            return absl::NotFoundError(absl::StrCat("Key expired: ", key));
+        }
+
+        return decoded->meta.type;
+    }
+
+    absl::Status RedisDataStruct::HSet(
+        absl::string_view key,
+        absl::string_view field,
+        absl::string_view value,
+        int64_t ttl)
+    {
+        if (key.empty())
+        {
+            return absl::InvalidArgumentError("Key cannot be empty");
+        }
+
+        ValueMetadata meta{
+            .type = RedisDataType::kHash,
+            .expiry = ExpiryFromTTL(ttl),
+            .version = NewHashVersion(),
+            .size = 0,
+        };
+
+        auto encoded = db_->Get(key);
+        if (encoded.has_value())
+        {
+            auto decoded = DecodeValue(*encoded);
+            if (!decoded.ok())
             {
-                db_->Delete(key);
-                return absl::NotFoundError(absl::StrCat("Key expired: ", key));
+                return decoded.status();
+            }
+            if (!IsExpired(decoded->meta.expiry))
+            {
+                if (decoded->meta.type != RedisDataType::kHash)
+                {
+                    return absl::FailedPreconditionError(absl::StrCat("Wrong type for key: ", key));
+                }
+
+                meta = decoded->meta;
+                if (ttl > 0)
+                {
+                    meta.expiry = ExpiryFromTTL(ttl);
+                }
             }
         }
 
-        return meta.type;
+        const auto data_key = EncodeHashDataKey(key, meta.version, field);
+        if (!db_->Get(data_key).has_value())
+        {
+            ++meta.size;
+        }
+
+        WriteBatch batch(db_, {});
+        if (auto status = batch.Put(key, EncodeHashMetadata(meta)); !status.ok())
+        {
+            return status;
+        }
+        if (auto status = batch.Put(data_key, value); !status.ok())
+        {
+            return status;
+        }
+        return batch.Commit();
+    }
+
+    absl::StatusOr<std::string> RedisDataStruct::HGet(absl::string_view key, absl::string_view field)
+    {
+        auto meta = LoadHashMetadata(key);
+        if (!meta.ok())
+        {
+            return meta.status();
+        }
+
+        auto value = db_->Get(EncodeHashDataKey(key, meta->version, field));
+        if (!value.has_value())
+        {
+            return absl::NotFoundError(absl::StrCat("Hash field not found: ", key, ".", field));
+        }
+        return *value;
+    }
+
+    absl::Status RedisDataStruct::HDel(absl::string_view key, absl::string_view field)
+    {
+        auto meta = LoadHashMetadata(key);
+        if (!meta.ok())
+        {
+            if (absl::IsNotFound(meta.status()))
+            {
+                return absl::OkStatus();
+            }
+            return meta.status();
+        }
+
+        const auto data_key = EncodeHashDataKey(key, meta->version, field);
+        if (!db_->Get(data_key).has_value())
+        {
+            return absl::OkStatus();
+        }
+
+        if (meta->size > 0)
+        {
+            --meta->size;
+        }
+        WriteBatch batch(db_, {});
+        if (auto status = batch.Delete(data_key); !status.ok())
+        {
+            return status;
+        }
+
+        if (meta->size == 0)
+        {
+            if (auto status = batch.Delete(key); !status.ok())
+            {
+                return status;
+            }
+        }
+        else
+        {
+            if (auto status = batch.Put(key, EncodeHashMetadata(*meta)); !status.ok())
+            {
+                return status;
+            }
+        }
+
+        return batch.Commit();
     }
 
 } // namespace bitcask

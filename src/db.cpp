@@ -710,31 +710,39 @@ namespace bitcask
         }
 
         uint64_t size = 0;
+        uint64_t data_files_size = 0;
         for (auto it = fs::directory_iterator(options_.data_dir, ec); !ec && it != fs::directory_iterator(); it.increment(ec))
         {
             std::error_code file_ec;
             if (it->is_regular_file(file_ec) && !file_ec)
             {
-                size += static_cast<uint64_t>(fs::file_size(it->path(), file_ec));
+                const auto file_size = static_cast<uint64_t>(fs::file_size(it->path(), file_ec));
+                size += file_size;
+                if (it->path().filename().string().ends_with(kDataFileNameSuffix))
+                {
+                    data_files_size += file_size;
+                }
             }
         }
 
         // On Windows, file sizes from directory entries may be stale while
-        // the file is open with buffered writes. Add the in-memory write
-        // offset for each data file to reflect unflushed data.
-        if (size == 0)
+        // the file is open with buffered writes. Use the in-memory write
+        // offsets for open data files when they are ahead of directory sizes.
+        uint64_t open_data_files_size = 0;
+        for (const auto& [_, data_file] : older_files_)
         {
-            for (const auto& [_, data_file] : older_files_)
+            if (data_file)
             {
-                if (data_file)
-                {
-                    size += static_cast<uint64_t>(data_file->write_offset);
-                }
+                open_data_files_size += static_cast<uint64_t>(data_file->write_offset);
             }
-            if (active_file_)
-            {
-                size += static_cast<uint64_t>(active_file_->write_offset);
-            }
+        }
+        if (active_file_)
+        {
+            open_data_files_size += static_cast<uint64_t>(active_file_->write_offset);
+        }
+        if (open_data_files_size > data_files_size)
+        {
+            size += open_data_files_size - data_files_size;
         }
 
         return size;
