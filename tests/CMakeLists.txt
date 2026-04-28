@@ -9,6 +9,8 @@ add_executable(bitcask_tests
     test_http_server.cpp
     test_merge.cpp
     test_write_batch.cpp
+    test_resp.cpp
+    test_redis_command.cpp
     test_redis_data_struct.cpp
 )
 
@@ -20,6 +22,7 @@ target_include_directories(bitcask_tests PRIVATE
 target_link_libraries(bitcask_tests PRIVATE
     bitcask_lib
     bitcask_http_lib
+    bitcask_redis_lib
     Catch2::Catch2WithMain
 )
 

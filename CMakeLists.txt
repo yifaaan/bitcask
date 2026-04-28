@@ -19,7 +19,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 find_package(absl CONFIG REQUIRED)
+find_package(asio CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
+find_package(hiredis CONFIG REQUIRED)
 find_package(httplib CONFIG REQUIRED)
 find_package(protobuf CONFIG REQUIRED)
 find_package(tlx CONFIG REQUIRED)
@@ -64,6 +66,8 @@ add_library(bitcask_lib STATIC
     src/db.cpp
     src/iterator.cpp
     src/batch.cpp
+    src/resp/resp.cpp
+    src/redis/redis_command.cpp
     src/types/redis_data_struct.cpp
 )
 
@@ -71,7 +75,7 @@ target_include_directories(bitcask_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/src
 )
 target_compile_options(bitcask_lib PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
-target_link_libraries(bitcask_lib PUBLIC absl::status absl::crc32c absl::btree absl::strings protobuf::libprotobuf libart tlx)
+target_link_libraries(bitcask_lib PUBLIC absl::status absl::crc32c absl::btree absl::strings hiredis::hiredis protobuf::libprotobuf libart tlx)
 
 add_library(bitcask_http_lib STATIC
     src/http_server.cpp
@@ -84,6 +88,22 @@ target_link_libraries(bitcask_http_lib PUBLIC bitcask_lib httplib::httplib)
 
 add_executable(bitcask_http src/main.cpp)
 target_link_libraries(bitcask_http PRIVATE bitcask_http_lib)
+
+add_library(bitcask_redis_lib STATIC
+    src/redis/redis_server.cpp
+)
+
+target_include_directories(bitcask_redis_lib PUBLIC
+    ${CMAKE_SOURCE_DIR}/src
+)
+target_compile_definitions(bitcask_redis_lib PUBLIC ASIO_STANDALONE)
+target_link_libraries(bitcask_redis_lib PUBLIC bitcask_lib asio::asio)
+if(WIN32)
+    target_link_libraries(bitcask_redis_lib PUBLIC ws2_32 mswsock)
+endif()
+
+add_executable(bitcask_redis src/redis_main.cpp)
+target_link_libraries(bitcask_redis PRIVATE bitcask_redis_lib)
 
 add_subdirectory(benchmarks)
 add_subdirectory(tests)

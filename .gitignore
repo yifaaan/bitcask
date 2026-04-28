@@ -1,6 +1,5 @@
 # Build
 build/
-out/
 
 # IDE
 .vs/
