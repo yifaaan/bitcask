@@ -1,9 +1,8 @@
 {
-  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "bitcask",
   "version-string": "0.1.0",
   "description": "A bitcask key-value storage engine in C++",
-  "builtin-baseline": "c3867e714dd3a51c272826eea77267876517ed99",
+  "builtin-baseline": "81de6771512413aaf89ea77add5ad1fda126b9d0",
   "dependencies": [
     "abseil",
     "asio",
