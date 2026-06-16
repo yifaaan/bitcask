@@ -1,5 +1,6 @@
 # Build
 build/
+CMakeUserPresets.json
 
 # IDE
 .vs/

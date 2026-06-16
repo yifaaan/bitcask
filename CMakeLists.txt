@@ -5,12 +5,10 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE AND DEFINED ENV{VCPKG_ROOT})
     set(CMAKE_TOOLCHAIN_FILE "${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE STRING "Vcpkg toolchain file")
 endif()
 
-project(bitcask VERSION 0.1.0 LANGUAGES C CXX)
+project(bitcask VERSION 0.2.0 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_C_STANDARD 11)
-set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Default to Release build
@@ -18,92 +16,37 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# === Dependencies ===
 find_package(absl CONFIG REQUIRED)
-find_package(asio CONFIG REQUIRED)
-find_package(benchmark CONFIG REQUIRED)
-find_package(hiredis CONFIG REQUIRED)
-find_package(httplib CONFIG REQUIRED)
-find_package(protobuf CONFIG REQUIRED)
-find_package(tlx CONFIG REQUIRED)
 
-include(FetchContent)
-FetchContent_Declare(
-    libart
-    GIT_REPOSITORY https://github.com/armon/libart.git
-    GIT_TAG master
-)
-
-# libart has no CMakeLists.txt — write a thin shim and add_subdirectory it
-FetchContent_MakeAvailable(libart)
-if(NOT TARGET libart)
-    # strings.h is POSIX-only; libart only needs string.h functions on this code path
-    file(WRITE "${libart_BINARY_DIR}/strings.h" "#include <string.h>\n")
-    file(WRITE "${libart_BINARY_DIR}/compat.h"
-        "#ifdef _MSC_VER\n"
-        "#include <intrin.h>\n"
-        "#define __builtin_ctz(x) (int)_tzcnt_u32((unsigned int)(x))\n"
-        "#endif\n"
-    )
-    set_source_files_properties(${libart_SOURCE_DIR}/src/art.c PROPERTIES LANGUAGE CXX)
-    add_library(libart STATIC ${libart_SOURCE_DIR}/src/art.c)
-    target_include_directories(libart PUBLIC ${libart_SOURCE_DIR}/src ${libart_BINARY_DIR})
-    target_compile_definitions(libart PRIVATE _CRT_SECURE_NO_WARNINGS)
-    if(MSVC)
-        target_compile_options(libart PRIVATE "/FI${libart_BINARY_DIR}/compat.h")
-    endif()
-endif()
-
-include(CTest)
-
+# === Bitcask Core Library ===
 add_library(bitcask_lib STATIC
-    src/fio/file_io.cpp
-    src/fio/io_manager.cpp
-    src/fio/mmap_io.cpp
-    src/data/log_record.cpp
-    src/index/index.cpp
-    src/index/btree_index.cpp
-    src/index/art_index.cpp
-    src/db.cpp
-    src/iterator.cpp
-    src/batch.cpp
-    src/resp/resp.cpp
-    src/redis/redis_command.cpp
-    src/types/redis_data_struct.cpp
+    Source/FIO/IOManager.h
+    Source/FIO/IOManager.cpp
+    Source/FIO/FileIO.h
+    Source/FIO/FileIO.cpp
+    Source/FIO/MmapIO.h
+    Source/FIO/MmapIO.cpp
 )
 
 target_include_directories(bitcask_lib PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
-)
-target_compile_options(bitcask_lib PUBLIC $<$<CXX_COMPILER_ID:MSVC>:/utf-8>)
-target_link_libraries(bitcask_lib PUBLIC absl::status absl::crc32c absl::btree absl::strings hiredis::hiredis protobuf::libprotobuf libart tlx)
-
-add_library(bitcask_http_lib STATIC
-    src/http_server.cpp
+    ${CMAKE_SOURCE_DIR}/Source
 )
 
-target_include_directories(bitcask_http_lib PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
-)
-target_link_libraries(bitcask_http_lib PUBLIC bitcask_lib httplib::httplib)
-
-add_executable(bitcask_http src/main.cpp)
-target_link_libraries(bitcask_http PRIVATE bitcask_http_lib)
-
-add_library(bitcask_redis_lib STATIC
-    src/redis/redis_server.cpp
+target_compile_options(bitcask_lib PUBLIC
+    $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+    $<$<CXX_COMPILER_ID:MSVC>:/Zc:__cplusplus>
 )
 
-target_include_directories(bitcask_redis_lib PUBLIC
-    ${CMAKE_SOURCE_DIR}/src
+target_link_libraries(bitcask_lib PUBLIC
+    absl::status
+    absl::strings
 )
-target_compile_definitions(bitcask_redis_lib PUBLIC ASIO_STANDALONE)
-target_link_libraries(bitcask_redis_lib PUBLIC bitcask_lib asio::asio)
-if(WIN32)
-    target_link_libraries(bitcask_redis_lib PUBLIC ws2_32 mswsock)
+
+
+# === Tests (optional) ===
+option(BITCASK_BUILD_TESTS "Build tests" OFF)
+if(BITCASK_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(Test)
 endif()
-
-add_executable(bitcask_redis src/redis_main.cpp)
-target_link_libraries(bitcask_redis PRIVATE bitcask_redis_lib)
-
-add_subdirectory(benchmarks)
-add_subdirectory(tests)
