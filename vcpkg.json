@@ -11,6 +11,10 @@
     {
       "name": "cpp-httplib",
       "version>=": "0.15.3"
+    },
+    {
+      "name": "gtest",
+      "version>=": "1.14.0"
     }
   ],
   "builtin-baseline": "81de6771512413aaf89ea77add5ad1fda126b9d0"

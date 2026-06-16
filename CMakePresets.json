@@ -19,7 +19,7 @@
       "name": "windows-msvc",
       "displayName": "Windows MSVC",
       "inherits": "base",
-      "generator": "Visual Studio 17 2022",
+      "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "condition": {
         "type": "equals",

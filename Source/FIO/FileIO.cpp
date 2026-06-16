@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <format>
 #include <tuple>
 
 #ifdef _WIN32
@@ -50,7 +51,7 @@ namespace bitcask
 		if (_fseeki64(file, offset, SEEK_SET) != 0)
 		{
 #else
-		if (fseeko(file_, offset, SEEK_SET) != 0)
+		if (fseeko(file, offset, SEEK_SET) != 0)
 		{
 #endif
 			return absl::InternalError("fseek failed");
@@ -77,7 +78,7 @@ namespace bitcask
 		if (_fseeki64(file, 0, SEEK_END) != 0)
 		{
 #else
-		if (fseeko(file_, 0, SEEK_END) != 0)
+		if (fseeko(file, 0, SEEK_END) != 0)
 		{
 #endif
 			return absl::InternalError("fseek to end failed");
@@ -107,7 +108,7 @@ namespace bitcask
 			return absl::InternalError("_commit failed");
 		}
 #else
-		if (fsync(fileno(file_)) != 0)
+		if (fsync(fileno(file)) != 0)
 		{
 			return absl::InternalError("fsync failed");
 		}
@@ -146,7 +147,7 @@ namespace bitcask
 		{
 #else
 		struct stat st;
-		if (fstat(fileno(file_), &st) != 0)
+		if (fstat(fileno(file), &st) != 0)
 		{
 #endif
 			return absl::InternalError("fstat failed");

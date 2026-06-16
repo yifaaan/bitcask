@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <format>
+#include <tuple>
 
 #ifdef _WIN32
 #include <io.h>
@@ -154,7 +156,7 @@ namespace bitcask
 			handle = INVALID_HANDLE_VALUE;
 		}
 #else
-		munmap(addr_, size_);
+		munmap(addr, size);
 		if (fd_ >= 0)
 		{
 			close(fd_);

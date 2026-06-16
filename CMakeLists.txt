@@ -16,6 +16,13 @@ find_package(absl CONFIG REQUIRED)
 
 # === Bitcask Core Library ===
 add_library(bitcask_lib STATIC
+    Source/Core/Varint.h
+    Source/Data/CRC32C.h
+    Source/Data/CRC32C.cpp
+    Source/Data/LogRecord.h
+    Source/Data/LogRecord.cpp
+    Source/Data/DataFile.h
+    Source/Data/DataFile.cpp
     Source/FIO/IOManager.h
     Source/FIO/IOManager.cpp
     Source/FIO/FileIO.h
@@ -34,7 +41,9 @@ target_compile_options(bitcask_lib PUBLIC
 )
 
 target_link_libraries(bitcask_lib PUBLIC
+    absl::crc32c
     absl::status
+    absl::statusor
     absl::strings
 )
 
