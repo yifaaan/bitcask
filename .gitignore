@@ -7,7 +7,9 @@ build/
 *.suo
 *.sln
 *.vcxproj*
-.vscode
+.vscode/*
+!.vscode/
+!.vscode/settings.json
 # vcpkg
 vcpkg/
 vcpkg_installed/

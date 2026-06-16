@@ -1,0 +1,9 @@
+{
+  "cmake.generator": "Ninja",
+  "cmake.configureEnvironment": {
+    "VCPKG_ROOT": "/home/smooth/vcpkg"
+  },
+  "cmake.configureSettings": {
+    "CMAKE_MAKE_PROGRAM": "/usr/bin/ninja"
+  }
+}

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <iterator>
 #include <limits>
+#include <mutex>
 #include <vector>
 
 #include "data/log_record.h"
