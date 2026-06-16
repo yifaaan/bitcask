@@ -4,6 +4,9 @@
 #include <string>
 
 #ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 #endif
 
@@ -31,19 +34,19 @@ namespace bitcask
 			   HANDLE handle
 #endif
 			   )
-			: addr_(addr), size_(size)
+			: addr(addr), size(size)
 #ifdef _WIN32
 			  ,
-			  handle_(handle)
+			  handle(handle)
 #endif
 		{
 		}
 
-		void* addr_ = nullptr; // Mapped address
-		int64_t size_ = 0;	   // File size
+		void* addr = nullptr; // Mapped address
+		int64_t size = 0;	   // File size
 
 #ifdef _WIN32
-		HANDLE handle_ = INVALID_HANDLE_VALUE; // Windows file handle
+		HANDLE handle = INVALID_HANDLE_VALUE; // Windows file handle
 #else
 		int fd_ = -1; // POSIX file descriptor
 #endif

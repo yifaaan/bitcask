@@ -1,5 +1,6 @@
 #include "MmapIO.h"
 
+#include <algorithm>
 #include <cstring>
 
 #ifdef _WIN32
@@ -16,9 +17,9 @@ namespace bitcask
 
 	MmapIO::~MmapIO()
 	{
-		if (addr_)
+		if (addr)
 		{
-			Close();
+			std::ignore = Close();
 		}
 	}
 
@@ -106,21 +107,21 @@ namespace bitcask
 
 	absl::StatusOr<int64_t> MmapIO::Read(std::span<std::byte> buf, int64_t offset)
 	{
-		if (!addr_)
+		if (!addr)
 		{
 			return absl::FailedPreconditionError("file not mapped");
 		}
-		if (offset < 0 || offset > size_)
+		if (offset < 0 || offset > size)
 		{
 			return absl::InvalidArgumentError("offset out of range");
 		}
 
-		int64_t avail = size_ - offset;
+		int64_t avail = size - offset;
 		int64_t toRead = std::min(avail, static_cast<int64_t>(buf.size()));
 
 		if (toRead > 0)
 		{
-			std::memcpy(buf.data(), static_cast<char*>(addr_) + offset, toRead);
+			std::memcpy(buf.data(), static_cast<char*>(addr) + offset, toRead);
 		}
 
 		return toRead;
@@ -140,17 +141,17 @@ namespace bitcask
 
 	absl::Status MmapIO::Close()
 	{
-		if (!addr_)
+		if (!addr)
 		{
 			return absl::OkStatus();
 		}
 
 #ifdef _WIN32
-		UnmapViewOfFile(addr_);
-		if (handle_ != INVALID_HANDLE_VALUE)
+		UnmapViewOfFile(addr);
+		if (handle != INVALID_HANDLE_VALUE)
 		{
-			CloseHandle(handle_);
-			handle_ = INVALID_HANDLE_VALUE;
+			CloseHandle(handle);
+			handle = INVALID_HANDLE_VALUE;
 		}
 #else
 		munmap(addr_, size_);
@@ -160,18 +161,18 @@ namespace bitcask
 			fd_ = -1;
 		}
 #endif
-		addr_ = nullptr;
-		size_ = 0;
+		addr = nullptr;
+		size = 0;
 		return absl::OkStatus();
 	}
 
 	absl::StatusOr<int64_t> MmapIO::Size()
 	{
-		if (!addr_)
+		if (!addr)
 		{
 			return absl::FailedPreconditionError("file not mapped");
 		}
-		return size_;
+		return size;
 	}
 
 } // namespace bitcask

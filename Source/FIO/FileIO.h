@@ -3,6 +3,7 @@
 #include "IOManager.h"
 #include <cstdio>
 #include <string>
+#include <span>
 
 namespace bitcask
 {
@@ -23,10 +24,10 @@ namespace bitcask
 
 	private:
 		explicit FileIO(FILE* file, std::string path)
-			: file_(file), path_(std::move(path)) {}
+			: file(file), path(std::move(path)) {}
 
-		FILE* file_;
-		std::string path_;
+		FILE* file;
+		std::string path;
 	};
 
 } // namespace bitcask

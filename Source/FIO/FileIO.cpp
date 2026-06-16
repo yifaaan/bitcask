@@ -2,6 +2,7 @@
 
 #include <cerrno>
 #include <cstring>
+#include <tuple>
 
 #ifdef _WIN32
 #include <io.h>
@@ -19,9 +20,9 @@ namespace bitcask
 
 	FileIO::~FileIO()
 	{
-		if (file_)
+		if (file)
 		{
-			Close();
+			std::ignore = Close();
 		}
 	}
 
@@ -39,14 +40,14 @@ namespace bitcask
 
 	absl::StatusOr<int64_t> FileIO::Read(std::span<std::byte> buf, int64_t offset)
 	{
-		if (!file_)
+		if (!file)
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
 		// Seek to offset
 #ifdef _WIN32
-		if (_fseeki64(file_, offset, SEEK_SET) != 0)
+		if (_fseeki64(file, offset, SEEK_SET) != 0)
 		{
 #else
 		if (fseeko(file_, offset, SEEK_SET) != 0)
@@ -56,8 +57,8 @@ namespace bitcask
 		}
 
 		// Read
-		size_t n = std::fread(buf.data(), 1, buf.size(), file_);
-		if (n == 0 && ferror(file_))
+		size_t n = std::fread(buf.data(), 1, buf.size(), file);
+		if (n == 0 && ferror(file))
 		{
 			return absl::InternalError("fread failed");
 		}
@@ -66,14 +67,14 @@ namespace bitcask
 
 	absl::StatusOr<int64_t> FileIO::Write(std::span<const std::byte> data)
 	{
-		if (!file_)
+		if (!file)
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
 		// Seek to end (ensure append)
 #ifdef _WIN32
-		if (_fseeki64(file_, 0, SEEK_END) != 0)
+		if (_fseeki64(file, 0, SEEK_END) != 0)
 		{
 #else
 		if (fseeko(file_, 0, SEEK_END) != 0)
@@ -83,7 +84,7 @@ namespace bitcask
 		}
 
 		// Write
-		size_t n = std::fwrite(data.data(), 1, data.size(), file_);
+		size_t n = std::fwrite(data.data(), 1, data.size(), file);
 		if (n != data.size())
 		{
 			return absl::InternalError("fwrite incomplete");
@@ -93,15 +94,15 @@ namespace bitcask
 
 	absl::Status FileIO::Sync()
 	{
-		if (!file_)
+		if (!file)
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		std::fflush(file_);
+		std::fflush(file);
 
 #ifdef _WIN32
-		if (_commit(_fileno(file_)) != 0)
+		if (_commit(_fileno(file)) != 0)
 		{
 			return absl::InternalError("_commit failed");
 		}
@@ -116,32 +117,32 @@ namespace bitcask
 
 	absl::Status FileIO::Close()
 	{
-		if (!file_)
+		if (!file)
 		{
 			return absl::OkStatus();
 		}
 
-		if (std::fclose(file_) != 0)
+		if (std::fclose(file) != 0)
 		{
-			file_ = nullptr;
+			file = nullptr;
 			return absl::InternalError("fclose failed");
 		}
-		file_ = nullptr;
+		file = nullptr;
 		return absl::OkStatus();
 	}
 
 	absl::StatusOr<int64_t> FileIO::Size()
 	{
-		if (!file_)
+		if (!file)
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		std::fflush(file_);
+		std::fflush(file);
 
 #ifdef _WIN32
 		struct _stat64 st;
-		if (_fstat64(_fileno(file_), &st) != 0)
+		if (_fstat64(_fileno(file), &st) != 0)
 		{
 #else
 		struct stat st;

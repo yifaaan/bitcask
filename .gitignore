@@ -29,3 +29,4 @@ bitcask_data/
 .DS_Store
 Thumbs.db
 .cache/
+.codegraph/
