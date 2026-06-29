@@ -15,7 +15,7 @@ namespace
 		const LogRecord record{
 			.key = "test-key",
 			.value = "test-value",
-			.type = LogRecordType::kNormal,
+			.type = LogRecordType::Normal,
 		};
 
 		auto [encoded, size] = EncodeLogRecord(record);
@@ -23,7 +23,7 @@ namespace
 
 		ASSERT_TRUE(headerOpt.has_value());
 		EXPECT_EQ(size, static_cast<int64_t>(encoded.size()));
-		EXPECT_EQ(headerOpt->type, LogRecordType::kNormal);
+		EXPECT_EQ(headerOpt->type, LogRecordType::Normal);
 		EXPECT_EQ(headerOpt->keySize, static_cast<int64_t>(record.key.size()));
 		EXPECT_EQ(headerOpt->valueSize, static_cast<int64_t>(record.value.size()));
 
@@ -33,7 +33,7 @@ namespace
 
 	TEST(LogRecord, SupportsAllRecordTypesAndEmptyFields)
 	{
-		for (const auto type : {LogRecordType::kNormal, LogRecordType::kDeleted, LogRecordType::kTxnFinished})
+		for (const auto type : {LogRecordType::Normal, LogRecordType::Deleted, LogRecordType::TxnFinished})
 		{
 			const LogRecord record{.type = type};
 			auto [encoded, size] = EncodeLogRecord(record);

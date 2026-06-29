@@ -39,13 +39,13 @@ namespace bitcask
 
 		bool IsValidType(uint8_t value)
 		{
-			return value <= static_cast<uint8_t>(LogRecordType::kTxnFinished);
+			return value <= static_cast<uint8_t>(LogRecordType::TxnFinished);
 		}
 	} // namespace
 
 	std::pair<std::vector<std::byte>, int64_t> EncodeLogRecord(const LogRecord& record)
 	{
-		std::vector<std::byte> header(kMaxLogRecordHeaderSize);
+		std::vector<std::byte> header(MaxLogRecordHeaderSize);
 		size_t headerLen = 0;
 
 		header[headerLen++] = static_cast<std::byte>(record.type);
@@ -123,7 +123,7 @@ namespace bitcask
 
 	std::pair<std::vector<std::byte>, int64_t> EncodeLogRecordPos(const LogRecordPos& pos)
 	{
-		std::vector<std::byte> buf(3 * kMaxVarintLength);
+		std::vector<std::byte> buf(3 * MaxVarintLength);
 		size_t n = 0;
 		n += static_cast<size_t>(PutVarint(std::span(buf).subspan(n), pos.fid));
 		n += static_cast<size_t>(PutVarint(std::span(buf).subspan(n), static_cast<uint64_t>(pos.offset)));

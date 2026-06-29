@@ -87,7 +87,7 @@ namespace bitcask
 			return absl::InvalidArgumentError("offset out of range");
 		}
 
-		std::vector<std::byte> headerBuf(4 + kMaxLogRecordHeaderSize);
+		std::vector<std::byte> headerBuf(4 + MaxLogRecordHeaderSize);
 		auto headerRead = io->Read(headerBuf, offset);
 		if (!headerRead.ok())
 		{
@@ -158,7 +158,7 @@ namespace bitcask
 		LogRecord record;
 		record.key = key;
 		record.value.assign(reinterpret_cast<const char*>(posBytes.data()), static_cast<size_t>(posSize));
-		record.type = LogRecordType::kNormal;
+		record.type = LogRecordType::Normal;
 
 		auto [encoded, encodedSize] = EncodeLogRecord(record);
 		auto write = Write(encoded);

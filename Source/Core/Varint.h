@@ -10,7 +10,7 @@
 namespace bitcask
 {
 
-	constexpr int kMaxVarintLength = 10;
+	constexpr int MaxVarintLength = 10;
 
 	inline int VarintLength(uint64_t value) noexcept
 	{
@@ -46,7 +46,7 @@ namespace bitcask
 		uint64_t result = 0;
 		int shift = 0;
 
-		for (int n = 0; n < static_cast<int>(buf.size()) && n < kMaxVarintLength; ++n)
+		for (int n = 0; n < static_cast<int>(buf.size()) && n < MaxVarintLength; ++n)
 		{
 			const auto byte = std::to_integer<uint8_t>(buf[n]);
 			if (shift == 63 && (byte & 0x7Eu) != 0)

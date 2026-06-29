@@ -25,7 +25,3 @@ Enable tests with the provided presets; they set `BITCASK_BUILD_TESTS=ON`. Place
 ## Commit & Pull Request Guidelines
 
 Recent commits use short imperative summaries such as `Implement File IO`, `Add Redis Set`, and `Update documentation and configuration for Redis server integration`. Keep the first line concise and action-oriented. Pull requests should describe the change, list affected modules, mention tests run, and link related issues. Include screenshots only for documentation diagram changes.
-
-## Agent-Specific Instructions
-
-This repository may include a `.codegraph/` index. When it exists, use CodeGraph before broad grep-style exploration, for example `codegraph explore "FileIO"` or `codegraph node Source/FIO/FileIO.cpp`.

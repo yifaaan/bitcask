@@ -16,21 +16,6 @@
       }
     },
     {
-      "name": "windows-msvc",
-      "displayName": "Windows MSVC",
-      "inherits": "base",
-      "generator": "Visual Studio 18 2026",
-      "architecture": "x64",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
-      },
-      "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
-      }
-    },
-    {
       "name": "linux-debug",
       "displayName": "Linux Debug",
       "inherits": "base",
@@ -63,26 +48,6 @@
   ],
   "buildPresets": [
     {
-      "name": "windows-msvc-debug",
-      "configurePreset": "windows-msvc",
-      "configuration": "Debug",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
-      }
-    },
-    {
-      "name": "windows-msvc-release",
-      "configurePreset": "windows-msvc",
-      "configuration": "Release",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
-      }
-    },
-    {
       "name": "linux-debug",
       "configurePreset": "linux-debug",
       "condition": {
@@ -102,32 +67,6 @@
     }
   ],
   "testPresets": [
-    {
-      "name": "windows-msvc-debug",
-      "configurePreset": "windows-msvc",
-      "configuration": "Debug",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
-      },
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "windows-msvc-release",
-      "configurePreset": "windows-msvc",
-      "configuration": "Release",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Windows"
-      },
-      "output": {
-        "outputOnFailure": true
-      }
-    },
     {
       "name": "linux-debug",
       "configurePreset": "linux-debug",

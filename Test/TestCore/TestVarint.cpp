@@ -26,7 +26,7 @@ namespace
 
 		for (const auto value : values)
 		{
-			std::array<std::byte, kMaxVarintLength> buf{};
+			std::array<std::byte, MaxVarintLength> buf{};
 			const int len = PutVarint(buf, value);
 			EXPECT_EQ(len, VarintLength(value));
 
@@ -38,7 +38,7 @@ namespace
 
 	TEST(Varint, MatchesKnownEncoding)
 	{
-		std::array<std::byte, kMaxVarintLength> buf{};
+		std::array<std::byte, MaxVarintLength> buf{};
 		const int len = PutVarint(buf, 300);
 
 		ASSERT_EQ(len, 2);

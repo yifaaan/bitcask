@@ -4,6 +4,7 @@ add_executable(bitcask_tests
     TestCore/TestVarint.cpp
     TestData/TestLogRecord.cpp
     TestData/TestDataFile.cpp
+    TestIndex/TestBTreeIndex.cpp
 )
 
 target_link_libraries(bitcask_tests PRIVATE
