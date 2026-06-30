@@ -30,5 +30,5 @@ namespace bitcask
 		virtual void Clear() = 0;
 	};
 
-	std::unique_ptr<Index> CreateIndex(IndexType type);
+	std::unique_ptr<Index> NewIndex(IndexType type);
 } // namespace bitcask

@@ -44,7 +44,7 @@ void BTreeIndex::Clear()
 	btree.clear();
 }
 
-std::unique_ptr<Index> CreateIndex(IndexType type)
+std::unique_ptr<Index> bitcask::NewIndex(IndexType type)
 {
 	switch (type)
 	{

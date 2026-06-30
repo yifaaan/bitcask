@@ -10,7 +10,7 @@ namespace bitcask
 
 	DB::DB(Options options)
 		: options(std::move(options)),
-		  index(CreateIndex(this->options.indexType))
+		  index(NewIndex(this->options.indexType))
 	{
 	}
 
@@ -22,6 +22,8 @@ namespace bitcask
 		{
 			return status;
 		}
+		// 加载数据文件
+
 		return db;
 	}
 
@@ -42,13 +44,69 @@ namespace bitcask
 		{
 			return absl::InternalError("failed to create data directory: " + ec.message());
 		}
+		return absl::OkStatus();
+	}
 
-		auto file = DataFile::Open(options.dataDir, activeFid, IOType::Standard);
-		if (!file.ok())
+	absl::Status DB::LoadDataFiles()
+	{
+		std::vector<uint32_t> fids;
+
+		// 读取目录项
+		std::error_code ec;
+		for (const auto& entry : std::filesystem::directory_iterator(options.dataDir, ec))
 		{
-			return file.status();
+			if (ec)
+			{
+				return absl::InternalError("failed to read data directory: " + ec.message());
+			}
+			if (!entry.is_regular_file())
+			{
+				continue;
+			}
+
+			const auto path = entry.path();
+			if (path.extension() != DataFileNameSuffix)
+			{
+				continue;
+			}
+
+			const auto stem = path.stem().string();
+			uint32_t fid = 0;
+			auto [ptr, err] = std::from_chars(stem.data(), stem.data() + stem.size(), fid);
+			if (err != std::errc() || ptr != stem.data() + stem.size())
+			{
+				continue;
+			}
+			fids.push_back(fid);
 		}
-		activeFile = std::move(*file);
+
+		if (ec)
+		{
+			return absl::InternalError("failed to iterate data directory: " + ec.message());
+		}
+		if (fids.empty())
+		{
+			return absl::OkStatus();
+		}
+
+		std::ranges::sort(fids);
+		for (auto fid : fids)
+		{
+			auto fileOr = DataFile::Open(options.dataDir, fid, IOType::Standard);
+			if (!fileOr.ok())
+			{
+				return fileOr.status();
+			}
+
+			if (fid == fids.back())
+			{
+				activeFile = std::move(*fileOr);
+			}
+			else
+			{
+				olderFiles[fid] = std::move(*fileOr);
+			}
+		}
 		return absl::OkStatus();
 	}
 
@@ -77,7 +135,7 @@ namespace bitcask
 		{
 			return status;
 		}
-		
+
 		return absl::OkStatus();
 	}
 
@@ -95,7 +153,7 @@ namespace bitcask
 		}
 
 		// 写入编码后的数据
-		
+
 		auto encodedRecord = EncodeLogRecord(record);
 		auto len = encodedRecord.size();
 		// 如果到达文件大小限制，则切换到新的数据文件
@@ -200,6 +258,5 @@ namespace bitcask
 		}
 		return record.value;
 	}
-
 
 } // namespace bitcask

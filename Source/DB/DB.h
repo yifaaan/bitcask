@@ -20,14 +20,17 @@ namespace bitcask
 		// 数据目录
 		std::string dataDir = "./bitcask_data";
 		uint64_t maxDataFileSize = 10 * 1024 * 1024;
+		// 是否在每次写入后进行同步
 		bool syncOnWrite = false;
-		uint64_t bytesPerSync = 0;
 		IndexType indexType = IndexType::BTree;
 	};
 
 	class DB
 	{
 	public:
+		// 打开或创建数据库
+		// 1. 扫描并打开数据目录下的所有数据文件
+		// 2. 加载索引到内存
 		static absl::StatusOr<std::unique_ptr<DB>> Open(const Options& options);
 
 		absl::Status Put(std::string_view key, std::string_view value);
@@ -37,6 +40,8 @@ namespace bitcask
 	private:
 		explicit DB(Options options);
 
+		// 1. 扫描并打开数据目录下的所有数据文件
+		// 2. 加载索引到内存
 		absl::Status Initialize();
 		absl::StatusOr<LogRecordPos> AppendLogRecord(const LogRecord& record);
 		
@@ -44,8 +49,12 @@ namespace bitcask
 		// 需要加锁然后再调用
 		absl::Status SetActiveFile();
 
+		// 从磁盘加载数据文件
+		absl::Status LoadDataFiles();
+
 		Options options;
 		mutable std::shared_mutex mutex;
+		// 内存索引
 		std::unique_ptr<Index> index;
 		// 当前活跃数据文件，用于写入
 		std::unique_ptr<DataFile> activeFile;
