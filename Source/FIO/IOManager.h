@@ -42,7 +42,7 @@ namespace bitcask
 		virtual absl::StatusOr<int64_t> Size() = 0;
 
 		// Factory function
-		static absl::StatusOr<std::unique_ptr<IOManager>> Open(const std::string& path, IOType type);
+		static absl::StatusOr<std::unique_ptr<IOManager>> NewIOManager(std::string_view filePath, IOType type);
 	};
 
 } // namespace bitcask

@@ -27,16 +27,17 @@ namespace bitcask
 		}
 	}
 
-	absl::StatusOr<std::unique_ptr<FileIO>> FileIO::Open(const std::string& path)
+	absl::StatusOr<std::unique_ptr<FileIO>> bitcask::FileIO::Open(std::string_view path)
 	{
 		// Open file: read/write + binary + append + create
-		FILE* file = std::fopen(path.c_str(), "a+b");
+		const std::string pathString(path);
+		FILE* file = std::fopen(pathString.c_str(), "a+b");
 		if (!file)
 		{
 			return absl::InternalError(
-				std::format("failed to open file '{}': {}", path, std::strerror(errno)));
+				std::format("failed to open file '{}': {}", pathString, std::strerror(errno)));
 		}
-		return std::unique_ptr<FileIO>(new FileIO(file, path));
+		return std::unique_ptr<FileIO>(new FileIO(file, pathString));
 	}
 
 	absl::StatusOr<int64_t> FileIO::Read(std::span<std::byte> buf, int64_t offset)

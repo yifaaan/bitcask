@@ -1,5 +1,7 @@
 #include "DB.h"
 
+#include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <mutex>
 #include <system_error>

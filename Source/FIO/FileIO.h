@@ -15,7 +15,7 @@ namespace bitcask
 		~FileIO() override;
 
 		// Open file for read/write + append + create
-		static absl::StatusOr<std::unique_ptr<FileIO>> Open(const std::string& path);
+		static absl::StatusOr<std::unique_ptr<FileIO>> Open(std::string_view path);
 
 		absl::StatusOr<int64_t> Read(std::span<std::byte> buf, int64_t offset) override;
 		absl::StatusOr<int64_t> Write(std::span<const std::byte> data) override;

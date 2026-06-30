@@ -17,6 +17,7 @@ find_package(libuv CONFIG REQUIRED)
 
 # === Bitcask Core Library ===
 add_library(bitcask_lib STATIC
+    Source/Data/Varint.cpp
     Source/Data/LogRecord.cpp
     Source/Data/DataFile.cpp
     Source/DB/DB.cpp

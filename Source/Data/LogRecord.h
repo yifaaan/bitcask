@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "Varint.h"
+
 namespace bitcask
 {
 
@@ -33,5 +35,17 @@ namespace bitcask
 		int64_t size = 0;
 	};
 
+	struct LogRecordHeader
+	{
+		uint32_t crc = 0;
+		LogRecordType type = LogRecordType::Normal;
+		uint32_t keySize = 0;
+		uint32_t valueSize = 0;
+	};
+
+	constexpr size_t MaxLogRecordHeaderSize = 4 + 1 + 2 * MaxVarintLen32; // CRC32 + type + keySize + valueSize
 	std::vector<std::byte> EncodeLogRecord(const LogRecord& record);
+	std::pair<std::optional<LogRecordHeader>, int64_t> DecodeLogRecordHeader(std::span<const std::byte> buf);
+	uint32_t CalcLogRecordCRC(const LogRecord& record, const LogRecordHeader& header);
+
 } // namespace bitcask

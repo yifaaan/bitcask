@@ -20,12 +20,12 @@ namespace bitcask
 		int64_t writeOffset = 0;
 		std::unique_ptr<IOManager> io;
 
-		static absl::StatusOr<std::unique_ptr<DataFile>> Open(const std::string& dirPath, uint32_t fid, IOType ioType);
+		static absl::StatusOr<std::unique_ptr<DataFile>> Open(std::string_view dirPath, uint32_t fid, IOType ioType);
 
 		absl::StatusOr<int64_t> Write(std::span<const std::byte> data);
 		absl::StatusOr<std::pair<int64_t, LogRecord>> ReadLogRecord(int64_t offset) const;
 		absl::Status Sync();
-		absl::StatusOr<int64_t> AppendHintRecord(const std::string& key, const LogRecordPos& pos);
+		absl::Status Close();
 	};
 
 	constexpr std::string_view DataFileNameSuffix = ".data";

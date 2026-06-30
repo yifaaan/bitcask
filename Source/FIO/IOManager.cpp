@@ -10,12 +10,12 @@
 namespace bitcask
 {
 
-	absl::StatusOr<std::unique_ptr<IOManager>> IOManager::Open(const std::string& path, IOType type)
+	absl::StatusOr<std::unique_ptr<IOManager>> bitcask::IOManager::NewIOManager(std::string_view filePath, IOType type)
 	{
 		switch (type)
 		{
 		case IOType::Standard:
-			return FileIO::Open(path);
+			return FileIO::Open(filePath);
 		}
 		return absl::InvalidArgumentError("unknown IOType");
 	}
