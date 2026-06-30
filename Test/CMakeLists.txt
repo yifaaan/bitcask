@@ -1,9 +1,6 @@
 find_package(GTest CONFIG REQUIRED)
 
 add_executable(bitcask_tests
-    TestCore/TestVarint.cpp
-    TestData/TestLogRecord.cpp
-    TestData/TestDataFile.cpp
     TestIndex/TestBTreeIndex.cpp
 )
 

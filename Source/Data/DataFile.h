@@ -14,13 +14,6 @@
 namespace bitcask
 {
 
-	struct ReadLogRecordResult
-	{
-		LogRecord record;
-		int64_t size = 0;
-		bool isEof = false;
-	};
-
 	struct DataFile
 	{
 		uint32_t fid = 0;
@@ -30,15 +23,10 @@ namespace bitcask
 		static absl::StatusOr<std::unique_ptr<DataFile>> Open(const std::string& dirPath, uint32_t fid, IOType ioType);
 
 		absl::Status Sync();
-		absl::StatusOr<int64_t> Write(std::span<const std::byte> data);
-		absl::StatusOr<ReadLogRecordResult> ReadLogRecord(int64_t offset);
 		absl::StatusOr<int64_t> AppendHintRecord(const std::string& key, const LogRecordPos& pos);
 	};
 
-	absl::StatusOr<std::unique_ptr<DataFile>> OpenHintFile(const std::string& dirPath, IOType ioType);
-	absl::StatusOr<std::unique_ptr<DataFile>> OpenMergeFinishedFile(const std::string& dirPath, IOType ioType);
-
-	constexpr const char* kDataFileNameSuffix = ".data";
+	constexpr const char* DataFileNameSuffix = ".data";
 	std::string DataFileName(uint32_t fid);
 
 } // namespace bitcask

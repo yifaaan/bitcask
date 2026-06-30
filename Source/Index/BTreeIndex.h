@@ -24,7 +24,7 @@ public:
 
 private:
 	mutable std::shared_mutex mutex;
-	absl::btree_map<std::string, LogRecordPos> map;
+	absl::btree_map<std::string, LogRecordPos> btree;
 };
 
 }

@@ -2,6 +2,11 @@
 #include "FileIO.h"
 #include "MmapIO.h"
 
+#include <absl/status/status.h>
+
+#include <limits>
+#include <vector>
+
 namespace bitcask
 {
 
@@ -11,10 +16,13 @@ namespace bitcask
 		{
 		case IOType::Standard:
 			return FileIO::Open(path);
-		case IOType::MMap:
-			return MmapIO::Open(path);
 		}
 		return absl::InvalidArgumentError("unknown IOType");
+	}
+
+	absl::StatusOr<ReadLogRecordResult> IOManager::ReadLogRecord(int64_t offset)
+	{
+		
 	}
 
 } // namespace bitcask

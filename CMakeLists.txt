@@ -19,6 +19,7 @@ add_library(bitcask_lib STATIC
     Source/Data/CRC32C.cpp
     Source/Data/LogRecord.cpp
     Source/Data/DataFile.cpp
+    Source/DB/DB.cpp
     Source/FIO/IOManager.cpp
     Source/FIO/FileIO.cpp
     Source/FIO/MmapIO.cpp

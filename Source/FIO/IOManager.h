@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Data/LogRecord.h"
+
 #include <absl/status/status.h>
 #include <absl/status/statusor.h>
 
@@ -38,6 +40,10 @@ namespace bitcask
 
 		// Get file size
 		virtual absl::StatusOr<int64_t> Size() = 0;
+
+		// 从 offset 处读取并解码一条 LogRecord
+		// 返回记录、消费的总字节数以及 EOF 标志
+		absl::StatusOr<ReadLogRecordResult> ReadLogRecord(int64_t offset);
 
 		// Factory function
 		static absl::StatusOr<std::unique_ptr<IOManager>> Open(const std::string& path, IOType type);

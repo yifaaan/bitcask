@@ -6,15 +6,15 @@ namespace bitcask
 absl::Status BTreeIndex::Put(std::string_view key, const LogRecordPos& pos)
 {
 	std::unique_lock lock(mutex);
-	map[std::string(key)] = pos;
+	btree[std::string(key)] = pos;
 	return absl::OkStatus();
 }
 
 absl::StatusOr<LogRecordPos> BTreeIndex::Get(std::string_view key) const
 {
 	std::shared_lock lock(mutex);
-	auto it = map.find(std::string(key));
-	if (it == map.end())
+	auto it = btree.find(std::string(key));
+	if (it == btree.end())
 	{
 		return absl::NotFoundError("key not found");
 	}
@@ -24,7 +24,7 @@ absl::StatusOr<LogRecordPos> BTreeIndex::Get(std::string_view key) const
 absl::Status BTreeIndex::Delete(std::string_view key)
 {
 	std::unique_lock lock(mutex);
-	auto erased = map.erase(std::string(key));
+	auto erased = btree.erase(std::string(key));
 	if (erased == 0)
 	{
 		return absl::NotFoundError("key not found");
@@ -35,13 +35,13 @@ absl::Status BTreeIndex::Delete(std::string_view key)
 size_t BTreeIndex::Size() const
 {
 	std::shared_lock lock(mutex);
-	return map.size();
+	return btree.size();
 }
 
 void BTreeIndex::Clear()
 {
 	std::unique_lock lock(mutex);
-	map.clear();
+	btree.clear();
 }
 
 std::unique_ptr<Index> CreateIndex(IndexType type)
