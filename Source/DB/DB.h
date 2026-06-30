@@ -31,6 +31,8 @@ namespace bitcask
 		static absl::StatusOr<std::unique_ptr<DB>> Open(const Options& options);
 
 		absl::Status Put(std::string_view key, std::string_view value);
+		absl::StatusOr<std::string> Get(std::string_view key);
+		absl::Status Delete(std::string_view key);
 
 	private:
 		explicit DB(Options options);

@@ -3,8 +3,8 @@
 #include <absl/status/status.h>
 
 #include <filesystem>
-#include <sstream>
 #include <iomanip>
+#include <sstream>
 
 namespace bitcask
 {
@@ -54,5 +54,15 @@ namespace bitcask
 			return absl::FailedPreconditionError("data file is not open");
 		}
 		return io->Sync();
+	}
+
+	absl::StatusOr<int64_t> DataFile::Write(std::span<const std::byte> data)
+	{
+		return 0;
+	}
+
+	absl::StatusOr<LogRecord> DataFile::ReadLogRecord(int64_t offset)
+	{
+		return absl::OkStatus();
 	}
 } // namespace bitcask

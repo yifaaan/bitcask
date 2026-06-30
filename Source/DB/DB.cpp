@@ -151,5 +151,55 @@ namespace bitcask
 		return absl::OkStatus();
 	}
 
+	absl::StatusOr<std::string> DB::Get(std::string_view key)
+	{
+		std::shared_lock lock(mutex);
+		if (key.empty())
+		{
+			return absl::InvalidArgumentError("key is empty");
+		}
+
+		auto posOr = index->Get(key);
+		if (!posOr.ok())
+		{
+			return posOr.status();
+		}
+		const auto& pos = *posOr;
+
+		// 根据 pos 找到对应的数据文件
+		DataFile* file = nullptr;
+		if (pos.fid == activeFile->fid)
+		{
+			file = activeFile.get();
+		}
+		else
+		{
+			auto it = olderFiles.find(pos.fid);
+			if (it == olderFiles.end())
+			{
+				return absl::NotFoundError("data file not found for fid: " + std::to_string(pos.fid));
+			}
+			file = it->second.get();
+		}
+		if (!file)
+		{
+			return absl::InternalError("data file not found for fid: " + std::to_string(pos.fid));
+		}
+
+		// 从数据文件中读取数据
+		std::vector<std::byte> buf(pos.size);
+		auto readResult = file->ReadLogRecord(pos.offset);
+		if (!readResult.ok())
+		{
+			return readResult.status();
+		}
+		auto& record = *readResult;
+		if (record.type == LogRecordType::Deleted)
+		{
+			return absl::NotFoundError("key has been deleted");
+		}
+		return record.value;
+	}
+
 
 } // namespace bitcask
