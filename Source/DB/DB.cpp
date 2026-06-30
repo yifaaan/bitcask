@@ -5,6 +5,53 @@
 #include <system_error>
 #include <utility>
 
+namespace
+{
+	absl::Status LoadIndexFromOneFile(bitcask::Index* index, const bitcask::DataFile& file, uint32_t fid, int64_t* writeOffset = nullptr)
+	{
+		int64_t offset = 0;
+		while (true)
+		{
+			auto recordOr = file.ReadLogRecord(offset);
+			if (!recordOr.ok())
+			{
+				if (recordOr.status().code() == absl::StatusCode::kOutOfRange)
+				{
+					break;
+				}
+				return recordOr.status();
+			}
+			auto& [size, record] = *recordOr;
+			auto pos = bitcask::LogRecordPos
+			{
+				.fid = file.fid,
+				.offset = offset,
+				.size = size,
+			};
+			if (record.type == bitcask::LogRecordType::Deleted)
+			{
+				if (auto status = index->Delete(record.key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+				{
+					return status;
+				}
+			}
+			else
+			{
+				if (auto status = index->Put(record.key, pos); !status.ok())
+				{
+					return status;
+				}
+			}
+			offset += size;
+		}
+		if (writeOffset)
+		{
+			*writeOffset = offset;
+		}
+		return absl::OkStatus();
+	}
+}
+
 namespace bitcask
 {
 
@@ -129,78 +176,19 @@ namespace bitcask
 		// 遍历所有数据文件，加载索引到内存
 		for (const auto& [fid, file] : olderFiles)
 		{
-			int64_t offset = 0;
-			while (true)
+			if (auto status = LoadIndexFromOneFile(index.get(), *file, fid); !status.ok())
 			{
-				auto recordOr = file->ReadLogRecord(offset);
-				if (!recordOr.ok())
-				{
-					if (recordOr.status().code() == absl::StatusCode::kOutOfRange)
-					{
-						break;
-					}
-					return recordOr.status();
-				}
-				auto& [size, record] = *recordOr;
-				auto pos = LogRecordPos
-				{
-					.fid = fid,
-					.offset = offset,
-					.size = size,
-				};
-
-				if (record.type == LogRecordType::Deleted)
-				{
-					if (auto status = index->Delete(record.key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
-					{
-						return status;
-					}
-				}
-				else
-				{
-					index->Put(record.key, pos);
-				}
-
-				// Move to the next record
-				offset += size;
+				return status;
 			}
 		}
 
 		// Load active file
 		if (activeFile)
 		{
-			int64_t offset = 0;
-			while (true)
+			if (auto status = LoadIndexFromOneFile(index.get(), *activeFile, activeFile->fid, &activeFile->writeOffset); !status.ok())
 			{
-				auto recordOr = activeFile->ReadLogRecord(offset);
-				if (!recordOr.ok())
-				{
-					if (recordOr.status().code() == absl::StatusCode::kOutOfRange)
-					{
-						break;
-					}
-					return recordOr.status();
-				}
-				auto& [size, record] = *recordOr;
-				auto pos = LogRecordPos{
-					.fid = activeFile->fid,
-					.offset = offset,
-					.size = size,
-				};
-				if (record.type == LogRecordType::Deleted)
-				{
-					if (auto status = index->Delete(record.key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
-					{
-						return status;
-					}
-				}
-				else
-				{
-					index->Put(record.key, pos);
-				}
-				offset += size;
+				return status;
 			}
-			activeFile->writeOffset = offset;
 		}
 		return absl::OkStatus();
 	}
@@ -280,7 +268,8 @@ namespace bitcask
 			}
 		}
 		// 构造内存索引
-		auto pos = LogRecordPos{
+		auto pos = LogRecordPos
+		{
 			.fid = activeFile->fid,
 			.offset = writeOffset,
 			.size = int64_t(len),
@@ -377,6 +366,10 @@ namespace bitcask
 		if (!posOr.ok())
 		{
 			return posOr.status();
+		}
+		if (auto status = index->Delete(key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+		{
+			return status;
 		}
 		return absl::OkStatus();
 	}
