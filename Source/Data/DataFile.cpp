@@ -61,7 +61,7 @@ namespace bitcask
 		return 0;
 	}
 
-	absl::StatusOr<LogRecord> DataFile::ReadLogRecord(int64_t offset)
+	absl::StatusOr<std::pair<int64_t, LogRecord>> bitcask::DataFile::ReadLogRecord(int64_t offset)
 	{
 		return absl::OkStatus();
 	}

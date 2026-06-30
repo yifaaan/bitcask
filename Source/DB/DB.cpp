@@ -23,7 +23,16 @@ namespace bitcask
 			return status;
 		}
 		// 加载数据文件
+		if (auto status = db->LoadDataFiles(); !status.ok())
+		{
+			return status;
+		}
 
+		// 加载内存索引
+		if (auto status = db->LoadIndexFromDataFiles(); !status.ok())
+		{
+			return status;
+		}
 		return db;
 	}
 
@@ -110,6 +119,92 @@ namespace bitcask
 		return absl::OkStatus();
 	}
 
+	absl::Status DB::LoadIndexFromDataFiles()
+	{
+		if (!activeFile && olderFiles.empty())
+		{
+			return absl::OkStatus();
+		}
+
+		// 遍历所有数据文件，加载索引到内存
+		for (const auto& [fid, file] : olderFiles)
+		{
+			int64_t offset = 0;
+			while (true)
+			{
+				auto recordOr = file->ReadLogRecord(offset);
+				if (!recordOr.ok())
+				{
+					if (recordOr.status().code() == absl::StatusCode::kOutOfRange)
+					{
+						break;
+					}
+					return recordOr.status();
+				}
+				auto& [size, record] = *recordOr;
+				auto pos = LogRecordPos
+				{
+					.fid = fid,
+					.offset = offset,
+					.size = size,
+				};
+
+				if (record.type == LogRecordType::Deleted)
+				{
+					if (auto status = index->Delete(record.key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+					{
+						return status;
+					}
+				}
+				else
+				{
+					index->Put(record.key, pos);
+				}
+
+				// Move to the next record
+				offset += size;
+			}
+		}
+
+		// Load active file
+		if (activeFile)
+		{
+			int64_t offset = 0;
+			while (true)
+			{
+				auto recordOr = activeFile->ReadLogRecord(offset);
+				if (!recordOr.ok())
+				{
+					if (recordOr.status().code() == absl::StatusCode::kOutOfRange)
+					{
+						break;
+					}
+					return recordOr.status();
+				}
+				auto& [size, record] = *recordOr;
+				auto pos = LogRecordPos{
+					.fid = activeFile->fid,
+					.offset = offset,
+					.size = size,
+				};
+				if (record.type == LogRecordType::Deleted)
+				{
+					if (auto status = index->Delete(record.key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+					{
+						return status;
+					}
+				}
+				else
+				{
+					index->Put(record.key, pos);
+				}
+				offset += size;
+			}
+			activeFile->writeOffset = offset;
+		}
+		return absl::OkStatus();
+	}
+
 	absl::Status DB::Put(std::string_view key, std::string_view value)
 	{
 		if (key.empty())
@@ -118,7 +213,8 @@ namespace bitcask
 		}
 
 		// Create a log record
-		LogRecord record{
+		LogRecord record
+		{
 			.key = std::string(key),
 			.value = std::string(value),
 			.type = LogRecordType::Normal,
@@ -251,7 +347,7 @@ namespace bitcask
 		{
 			return readResult.status();
 		}
-		auto& record = *readResult;
+		auto& record = (*readResult).second;
 		if (record.type == LogRecordType::Deleted)
 		{
 			return absl::NotFoundError("key has been deleted");

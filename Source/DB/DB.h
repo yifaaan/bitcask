@@ -51,6 +51,8 @@ namespace bitcask
 
 		// 从磁盘加载数据文件
 		absl::Status LoadDataFiles();
+		// 从数据文件加载索引到内存
+		absl::Status LoadIndexFromDataFiles();
 
 		Options options;
 		mutable std::shared_mutex mutex;
@@ -58,7 +60,6 @@ namespace bitcask
 		std::unique_ptr<Index> index;
 		// 当前活跃数据文件，用于写入
 		std::unique_ptr<DataFile> activeFile;
-		uint32_t activeFid;
 		// 旧数据文件，只读
 		std::map<uint32_t, std::unique_ptr<DataFile>> olderFiles;
 	};
