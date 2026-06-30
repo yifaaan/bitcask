@@ -355,4 +355,30 @@ namespace bitcask
 		return record.value;
 	}
 
+	absl::Status DB::Delete(std::string_view key)
+	{
+		if (key.empty())
+		{
+			return absl::InvalidArgumentError("key is empty");
+		}
+
+		if (auto pos = index->Get(key); !pos.ok())
+		{
+			return absl::OkStatus();
+		}
+
+		// Create a log record for deletion
+		auto record = LogRecord
+		{
+			.key = std::string(key),
+			.type = LogRecordType::Deleted,
+		};
+		auto posOr = AppendLogRecord(record);
+		if (!posOr.ok())
+		{
+			return posOr.status();
+		}
+		return absl::OkStatus();
+	}
+
 } // namespace bitcask
