@@ -17,6 +17,7 @@ namespace bitcask
 
 	struct Options
 	{
+		// 数据目录
 		std::string dataDir = "./bitcask_data";
 		uint64_t maxDataFileSize = 10 * 1024 * 1024;
 		bool syncOnWrite = false;
@@ -36,14 +37,19 @@ namespace bitcask
 
 		absl::Status Initialize();
 		absl::StatusOr<LogRecordPos> AppendLogRecord(const LogRecord& record);
+		
+		// 设置当前活跃数据文件
+		// 需要加锁然后再调用
+		absl::Status SetActiveFile();
 
 		Options options;
 		mutable std::shared_mutex mutex;
 		std::unique_ptr<Index> index;
+		// 当前活跃数据文件，用于写入
 		std::unique_ptr<DataFile> activeFile;
-		uint32_t activeFid = 1;
+		uint32_t activeFid;
+		// 旧数据文件，只读
 		std::map<uint32_t, std::unique_ptr<DataFile>> olderFiles;
-		int64_t bytesSinceLastSync = 0;
 	};
 
 } // namespace bitcask

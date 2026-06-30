@@ -34,4 +34,6 @@ namespace bitcask
 		int64_t offset = 0;
 		int64_t size = 0;
 	};
+
+	std::vector<std::byte> EncodeLogRecord(const LogRecord& record);
 } // namespace bitcask
