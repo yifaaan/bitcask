@@ -1,7 +1,5 @@
 #pragma once
 
-#include "Core/Varint.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <optional>

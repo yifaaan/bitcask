@@ -1,6 +1,6 @@
 #include "IOManager.h"
+
 #include "FileIO.h"
-#include "MmapIO.h"
 
 #include <absl/status/status.h>
 
@@ -18,11 +18,6 @@ namespace bitcask
 			return FileIO::Open(path);
 		}
 		return absl::InvalidArgumentError("unknown IOType");
-	}
-
-	absl::StatusOr<ReadLogRecordResult> IOManager::ReadLogRecord(int64_t offset)
-	{
-		
 	}
 
 } // namespace bitcask

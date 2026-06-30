@@ -111,7 +111,7 @@ namespace bitcask
 				return status;
 			}
 		}
-		writeOffset = activeFile->writeOffset;
+		auto writeOffset = activeFile->writeOffset;
 		auto writeResult = activeFile->Write(encodedRecord);
 		if (!writeResult.ok())
 		{
@@ -129,7 +129,7 @@ namespace bitcask
 		auto pos = LogRecordPos{
 			.fid = activeFile->fid,
 			.offset = writeOffset,
-			.size = len,
+			.size = int64_t(len),
 		};
 		return pos;
 	}

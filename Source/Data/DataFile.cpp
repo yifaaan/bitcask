@@ -38,7 +38,7 @@ namespace bitcask
 	std::string DataFileName(uint32_t fid)
 	{
 		std::ostringstream stream;
-		stream << std::setw(9) << std::setfill('0') << fid << kDataFileNameSuffix;
+		stream << std::setw(9) << std::setfill('0') << fid << DataFileNameSuffix;
 		return stream.str();
 	}
 
