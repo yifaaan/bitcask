@@ -363,6 +363,89 @@ namespace
 		EXPECT_FALSE(it.Valid());
 	}
 
+	TEST(Iterator, ForwardPrev)
+	{
+		BTreeIndexIterator inner(std::vector<IndexEntry>{
+			{"a", {1, 10, 100}},
+			{"b", {2, 20, 200}},
+			{"c", {3, 30, 300}},
+		});
+		Iterator it(std::make_unique<BTreeIndexIterator>(std::move(inner)), {});
+
+		it.Seek("c");
+		ASSERT_TRUE(it.Valid());
+		EXPECT_EQ(it.Key(), "c");
+
+		it.Prev();
+		EXPECT_EQ(it.Key(), "b");
+		it.Prev();
+		EXPECT_EQ(it.Key(), "a");
+		it.Prev();
+		EXPECT_FALSE(it.Valid());
+	}
+
+	TEST(Iterator, ReversePrev)
+	{
+		BTreeIndexIterator inner(std::vector<IndexEntry>{
+			{"a", {1, 10, 100}},
+			{"b", {2, 20, 200}},
+			{"c", {3, 30, 300}},
+		});
+		Iterator it(std::make_unique<BTreeIndexIterator>(std::move(inner)),
+			{.reverse = true});
+
+		it.Rewind();
+		ASSERT_TRUE(it.Valid());
+		EXPECT_EQ(it.Key(), "c");
+
+		it.Next();
+		EXPECT_EQ(it.Key(), "b");
+
+		it.Prev();
+		EXPECT_EQ(it.Key(), "c");
+
+		it.Prev();
+		EXPECT_FALSE(it.Valid());
+	}
+
+	TEST(Iterator, PrefixFilterPrev)
+	{
+		BTreeIndexIterator inner(std::vector<IndexEntry>{
+			{"foo.a", {1, 10, 100}},
+			{"foo.b", {2, 20, 200}},
+			{"bar.c", {3, 30, 300}},
+			{"foo.d", {4, 40, 400}},
+		});
+		Iterator it(std::make_unique<BTreeIndexIterator>(std::move(inner)),
+			{.prefix = "foo."});
+
+		it.Rewind();
+		it.Next();
+		it.Next();
+		ASSERT_TRUE(it.Valid());
+		EXPECT_EQ(it.Key(), "foo.d");
+
+		it.Prev();
+		EXPECT_EQ(it.Key(), "foo.b");
+		it.Prev();
+		EXPECT_EQ(it.Key(), "foo.a");
+		it.Prev();
+		EXPECT_FALSE(it.Valid());
+	}
+
+	TEST(Iterator, EmptyUnderlyingIterator)
+	{
+		Iterator it(std::make_unique<BTreeIndexIterator>(std::vector<IndexEntry>{}), {});
+
+		EXPECT_FALSE(it.Valid());
+
+		it.Rewind();
+		EXPECT_FALSE(it.Valid());
+
+		it.Seek("anything");
+		EXPECT_FALSE(it.Valid());
+	}
+
 	TEST(Iterator, ValueWithoutReaderReturnsError)
 	{
 		BTreeIndexIterator inner(std::vector<IndexEntry>{

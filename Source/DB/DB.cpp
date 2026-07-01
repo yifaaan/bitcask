@@ -197,6 +197,13 @@ namespace bitcask
 
 	absl::Status DB::Put(std::string_view key, std::string_view value)
 	{
+		{
+			std::shared_lock lock(mutex);
+			if (closed)
+			{
+				return absl::FailedPreconditionError("db is closed");
+			}
+		}
 		if (key.empty())
 		{
 			return absl::InvalidArgumentError("key is empty");
@@ -228,6 +235,11 @@ namespace bitcask
 	absl::StatusOr<LogRecordPos> DB::AppendLogRecord(const LogRecord& record)
 	{
 		std::unique_lock lock(mutex);
+
+		if (closed)
+		{
+			return absl::FailedPreconditionError("db is closed");
+		}
 
 		// Active data file exists?
 		if (!activeFile)
@@ -333,6 +345,10 @@ namespace bitcask
 	absl::StatusOr<std::string> DB::Get(std::string_view key)
 	{
 		std::shared_lock lock(mutex);
+		if (closed)
+		{
+			return absl::FailedPreconditionError("db is closed");
+		}
 		if (key.empty())
 		{
 			return absl::InvalidArgumentError("key is empty");
@@ -388,6 +404,13 @@ namespace bitcask
 
 	absl::Status DB::Delete(std::string_view key)
 	{
+		{
+			std::shared_lock lock(mutex);
+			if (closed)
+			{
+				return absl::FailedPreconditionError("db is closed");
+			}
+		}
 		if (key.empty())
 		{
 			return absl::InvalidArgumentError("key is empty");
@@ -414,6 +437,48 @@ namespace bitcask
 			return status;
 		}
 		return absl::OkStatus();
+	}
+
+	absl::Status DB::Sync()
+	{
+		std::shared_lock lock(mutex);
+		if (closed)
+		{
+			return absl::FailedPreconditionError("db is closed");
+		}
+		if (!activeFile)
+		{
+			return absl::OkStatus();
+		}
+		return activeFile->Sync();
+	}
+
+	absl::Status DB::Close()
+	{
+		std::unique_lock lock(mutex);
+		if (closed)
+		{
+			return absl::OkStatus();
+		}
+
+		absl::Status result = absl::OkStatus();
+		if (activeFile)
+		{
+			if (auto status = activeFile->Close(); !status.ok() && result.ok())
+			{
+				result = status;
+			}
+		}
+		for (auto& [fid, file] : olderFiles)
+		{
+			if (auto status = file->Close(); !status.ok() && result.ok())
+			{
+				result = status;
+			}
+		}
+
+		closed = true;
+		return result;
 	}
 
 } // namespace bitcask

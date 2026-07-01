@@ -276,5 +276,89 @@ namespace
 		EXPECT_EQ(*k4, "value4");
 	}
 
+	TEST_F(DBTest, SyncSucceedsAfterWrite)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k", "v").ok());
+		EXPECT_TRUE(db->Sync().ok());
+	}
+
+	TEST_F(DBTest, SyncOnEmptyDatabaseIsOk)
+	{
+		// No writes yet, so there is no active file; Sync() must still succeed.
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		EXPECT_TRUE(db->Sync().ok());
+	}
+
+	TEST_F(DBTest, CloseSucceedsAndIsIdempotent)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k", "v").ok());
+		EXPECT_TRUE(db->Close().ok());
+		// Calling Close() again must be a no-op, not an error.
+		EXPECT_TRUE(db->Close().ok());
+	}
+
+	TEST_F(DBTest, OperationsFailAfterClose)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k", "v").ok());
+		ASSERT_TRUE(db->Close().ok());
+
+		auto putStatus = db->Put("k2", "v2");
+		EXPECT_FALSE(putStatus.ok());
+		EXPECT_EQ(putStatus.code(), absl::StatusCode::kFailedPrecondition);
+
+		auto getStatus = db->Get("k");
+		EXPECT_FALSE(getStatus.ok());
+		EXPECT_EQ(getStatus.status().code(), absl::StatusCode::kFailedPrecondition);
+
+		auto deleteStatus = db->Delete("k");
+		EXPECT_FALSE(deleteStatus.ok());
+		EXPECT_EQ(deleteStatus.code(), absl::StatusCode::kFailedPrecondition);
+
+		auto syncStatus = db->Sync();
+		EXPECT_FALSE(syncStatus.ok());
+		EXPECT_EQ(syncStatus.code(), absl::StatusCode::kFailedPrecondition);
+	}
+
+	TEST_F(DBTest, DataPersistsAfterExplicitCloseAndReopen)
+	{
+		{
+			auto dbOr = DB::Open(MakeOptions());
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+
+			ASSERT_TRUE(db->Put("k1", "v1").ok());
+			ASSERT_TRUE(db->Put("k2", "v2").ok());
+			ASSERT_TRUE(db->Sync().ok());
+			ASSERT_TRUE(db->Close().ok());
+		}
+
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		auto k1 = db->Get("k1");
+		ASSERT_TRUE(k1.ok()) << k1.status();
+		EXPECT_EQ(*k1, "v1");
+
+		auto k2 = db->Get("k2");
+		ASSERT_TRUE(k2.ok()) << k2.status();
+		EXPECT_EQ(*k2, "v2");
+	}
+
 } // namespace
 } // namespace bitcask

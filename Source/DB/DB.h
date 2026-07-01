@@ -40,6 +40,11 @@ namespace bitcask
 		std::vector<std::string> ListKeys();
 		absl::Status Fold(const std::function<bool(std::string_view key, std::string_view value)>& fn);
 
+		// 将活跃数据文件同步到磁盘
+		absl::Status Sync();
+		// 关闭数据库，同步并关闭所有数据文件；关闭后其余方法均返回错误。可重复调用。
+		absl::Status Close();
+
 	private:
 		explicit DB(Options options);
 
@@ -68,6 +73,8 @@ namespace bitcask
 		std::unique_ptr<DataFile> activeFile;
 		// 旧数据文件，只读
 		std::map<uint32_t, std::unique_ptr<DataFile>> olderFiles;
+		// Close() 之后置为 true，后续读写操作均返回错误
+		bool closed = false;
 	};
 
 } // namespace bitcask
