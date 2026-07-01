@@ -9,8 +9,7 @@ namespace bitcask
 	{
 		absl::Status UvErrorStatus(int rc, std::string_view op, std::string_view path)
 		{
-			return absl::InternalError(
-				std::format("{} failed for '{}': {}", op, path, uv_strerror(rc)));
+			return absl::InternalError(std::format("{} failed for '{}': {}", op, path, uv_strerror(rc)));
 		}
 	}
 
@@ -53,9 +52,7 @@ namespace bitcask
 		}
 
 		uv_fs_t req;
-		uv_buf_t iov = uv_buf_init(
-			reinterpret_cast<char*>(buf.data()),
-			static_cast<unsigned int>(buf.size()));
+		uv_buf_t iov = uv_buf_init(reinterpret_cast<char*>(buf.data()), static_cast<unsigned int>(buf.size()));
 
 		int rc = uv_fs_read(
 			uv_default_loop(),
