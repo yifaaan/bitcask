@@ -93,59 +93,72 @@ namespace bitcask
 		}
 		const int64_t remaining = fileSize - offset;
 
+		// Read only the prefix needed to decode the variable-length header.
+		// A short read that cannot even cover the minimal header is treated as EOF/truncation.
 		const auto maxHeaderRead = static_cast<size_t>(std::min<int64_t>(remaining, MaxLogRecordHeaderSize));
 		std::vector<std::byte> headerBuf(maxHeaderRead);
-		auto headerReadOr = io->Read(headerBuf, offset);
-		if (!headerReadOr.ok())
+		auto headerSizeOr = io->Read(headerBuf, offset);
+		if (!headerSizeOr.ok())
 		{
-			return headerReadOr.status();
+			return headerSizeOr.status();
 		}
-		headerBuf.resize(static_cast<size_t>(*headerReadOr));
+		headerBuf.resize(*headerSizeOr);
+		if (*headerSizeOr < 5)
+		{
+			return absl::OutOfRangeError("unexpected eof");
+		}
 
 		auto headerOr = DecodeLogRecordHeader(headerBuf);
 		if (!headerOr.first)
 		{
-			if (*headerReadOr < 5)
+			// If we could not read the full maximum header prefix, the record is most
+			// likely cut off at the file tail. Only a fully read header prefix that
+			// still cannot be decoded is considered corruption.
+			if (static_cast<size_t>(*headerSizeOr) < MaxLogRecordHeaderSize)
 			{
-				return absl::OutOfRangeError("unexpected eof");
+				return absl::OutOfRangeError("truncated log record header");
 			}
 			return absl::InternalError("invalid log record header");
 		}
 
 		const auto& header = *headerOr.first;
-		const uint64_t totalSize = 4ull + static_cast<uint64_t>(headerOr.second) +
-			static_cast<uint64_t>(header.keySize) + static_cast<uint64_t>(header.valueSize);
+		if (header.crc == 0 && header.keySize == 0 && header.valueSize == 0)
+		{
+			return absl::OutOfRangeError("empty log record");
+		}
+
+		const auto headerSize = headerOr.second;
+		const auto totalSize = headerSize + header.keySize + header.valueSize;
 		if (totalSize > static_cast<uint64_t>(remaining))
 		{
 			return absl::OutOfRangeError("truncated log record");
 		}
 
-		std::vector<std::byte> recordBuf(static_cast<size_t>(totalSize));
-		auto recordReadOr = io->Read(recordBuf, offset);
-		if (!recordReadOr.ok())
+		// Re-read the whole record only after the header and sizes are validated.
+		std::vector<std::byte> kvBuf(header.keySize + header.valueSize);
+		auto kvBufSizeOr = io->Read(kvBuf, offset + headerSize);
+		if (!kvBufSizeOr.ok())
 		{
-			return recordReadOr.status();
+			return kvBufSizeOr.status();
 		}
-		if (static_cast<uint64_t>(*recordReadOr) != totalSize)
+		if (*kvBufSizeOr != header.keySize + header.valueSize)
 		{
 			return absl::OutOfRangeError("truncated log record");
 		}
 
 		LogRecord record;
 		record.type = header.type;
-		record.key.assign(
-			reinterpret_cast<const char*>(recordBuf.data() + 4 + headerOr.second),
-			static_cast<size_t>(header.keySize));
-		record.value.assign(
-			reinterpret_cast<const char*>(recordBuf.data() + 4 + headerOr.second + static_cast<int64_t>(header.keySize)),
-			static_cast<size_t>(header.valueSize));
+		// Layout: [crc(4)][type][key varint][value varint][key bytes][value bytes].
+		record.key.assign(reinterpret_cast<const char*>(kvBuf.data()), header.keySize);
+		record.value.assign(reinterpret_cast<const char*>(kvBuf.data() + header.keySize), header.valueSize);
 
+		// CRC covers the header without CRC plus key/value payload.
 		if (CalcLogRecordCRC(record, header) != header.crc)
 		{
 			return absl::InternalError("crc mismatch");
 		}
 
-		return std::pair{static_cast<int64_t>(totalSize), std::move(record)};
+		return std::make_pair(totalSize, std::move(record));
 	}
 
 
