@@ -1,159 +1,168 @@
 #include "FileIO.h"
 
-#include <cerrno>
-#include <cstring>
 #include <format>
 #include <tuple>
 
-#ifdef _WIN32
-#include <io.h>
-#include <sys/stat.h>
-#define fsync _commit
-#define fileno _fileno
-#else
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif
-
 namespace bitcask
 {
+	namespace
+	{
+		absl::Status UvErrorStatus(int rc, std::string_view op, std::string_view path)
+		{
+			return absl::InternalError(
+				std::format("{} failed for '{}': {}", op, path, uv_strerror(rc)));
+		}
+	}
 
 	FileIO::~FileIO()
 	{
-		if (file)
+		if (fd != -1)
 		{
 			std::ignore = Close();
 		}
 	}
 
-	absl::StatusOr<std::unique_ptr<FileIO>> bitcask::FileIO::Open(std::string_view path)
+	absl::StatusOr<std::unique_ptr<FileIO>> FileIO::Open(std::string_view path)
 	{
-		// Open file: read/write + binary + append + create
+		uv_fs_t req;
 		const std::string pathString(path);
-		FILE* file = std::fopen(pathString.c_str(), "a+b");
-		if (!file)
+		int rc = uv_fs_open(
+			uv_default_loop(),
+			&req,
+			pathString.c_str(),
+			UV_FS_O_RDWR | UV_FS_O_CREAT | UV_FS_O_APPEND,
+			0644,
+			nullptr);
+
+		if (rc < 0)
 		{
-			return absl::InternalError(
-				std::format("failed to open file '{}': {}", pathString, std::strerror(errno)));
+			uv_fs_req_cleanup(&req);
+			return UvErrorStatus(rc, "open", pathString);
 		}
-		return std::unique_ptr<FileIO>(new FileIO(file, pathString));
+
+		auto file = std::unique_ptr<FileIO>(new FileIO(static_cast<uv_file>(rc), pathString));
+		uv_fs_req_cleanup(&req);
+		return file;
 	}
 
 	absl::StatusOr<int64_t> FileIO::Read(std::span<std::byte> buf, int64_t offset)
 	{
-		if (!file)
+		if (fd == -1)
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		// Seek to offset
-#ifdef _WIN32
-		if (_fseeki64(file, offset, SEEK_SET) != 0)
+		uv_fs_t req;
+		uv_buf_t iov = uv_buf_init(
+			reinterpret_cast<char*>(buf.data()),
+			static_cast<unsigned int>(buf.size()));
+
+		int rc = uv_fs_read(
+			uv_default_loop(),
+			&req,
+			fd,
+			&iov,
+			1,
+			offset,
+			nullptr);
+
+		if (rc < 0)
 		{
-#else
-		if (fseeko(file, offset, SEEK_SET) != 0)
-		{
-#endif
-			return absl::InternalError("fseek failed");
+			uv_fs_req_cleanup(&req);
+			return UvErrorStatus(rc, "read", path);
 		}
 
-		// Read
-		size_t n = std::fread(buf.data(), 1, buf.size(), file);
-		if (n == 0 && ferror(file))
-		{
-			return absl::InternalError("fread failed");
-		}
-		return static_cast<int64_t>(n);
+		uv_fs_req_cleanup(&req);
+		return static_cast<int64_t>(rc);
 	}
 
 	absl::StatusOr<int64_t> FileIO::Write(std::span<const std::byte> data)
 	{
-		if (!file)
+		if (fd == -1)
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		// Seek to end (ensure append)
-#ifdef _WIN32
-		if (_fseeki64(file, 0, SEEK_END) != 0)
+		uv_fs_t req;
+		uv_buf_t iov = uv_buf_init(
+			const_cast<char*>(reinterpret_cast<const char*>(data.data())),
+			static_cast<unsigned int>(data.size()));
+
+		int rc = uv_fs_write(
+			uv_default_loop(),
+			&req,
+			fd,
+			&iov,
+			1,
+			-1,
+			nullptr);
+
+		if (rc < 0)
 		{
-#else
-		if (fseeko(file, 0, SEEK_END) != 0)
-		{
-#endif
-			return absl::InternalError("fseek to end failed");
+			uv_fs_req_cleanup(&req);
+			return UvErrorStatus(rc, "write", path);
 		}
 
-		// Write
-		size_t n = std::fwrite(data.data(), 1, data.size(), file);
-		if (n != data.size())
-		{
-			return absl::InternalError("fwrite incomplete");
-		}
-		return static_cast<int64_t>(n);
+		uv_fs_req_cleanup(&req);
+		return static_cast<int64_t>(rc);
 	}
 
 	absl::Status FileIO::Sync()
 	{
-		if (!file)
+		if (fd == -1)
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		std::fflush(file);
+		uv_fs_t req;
+		int rc = uv_fs_fsync(uv_default_loop(), &req, fd, nullptr);
+		if (rc < 0)
+		{
+			uv_fs_req_cleanup(&req);
+			return UvErrorStatus(rc, "fsync", path);
+		}
 
-#ifdef _WIN32
-		if (_commit(_fileno(file)) != 0)
-		{
-			return absl::InternalError("_commit failed");
-		}
-#else
-		if (fsync(fileno(file)) != 0)
-		{
-			return absl::InternalError("fsync failed");
-		}
-#endif
+		uv_fs_req_cleanup(&req);
 		return absl::OkStatus();
 	}
 
 	absl::Status FileIO::Close()
 	{
-		if (!file)
+		if (fd == -1)
 		{
 			return absl::OkStatus();
 		}
 
-		if (std::fclose(file) != 0)
+		uv_fs_t req;
+		int rc = uv_fs_close(uv_default_loop(), &req, fd, nullptr);
+		uv_fs_req_cleanup(&req);
+		fd = -1;
+
+		if (rc < 0)
 		{
-			file = nullptr;
-			return absl::InternalError("fclose failed");
+			return UvErrorStatus(rc, "close", path);
 		}
-		file = nullptr;
 		return absl::OkStatus();
 	}
 
 	absl::StatusOr<int64_t> FileIO::Size()
 	{
-		if (!file)
+		if (fd == -1)
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		std::fflush(file);
-
-#ifdef _WIN32
-		struct _stat64 st;
-		if (_fstat64(_fileno(file), &st) != 0)
+		uv_fs_t req;
+		int rc = uv_fs_fstat(uv_default_loop(), &req, fd, nullptr);
+		if (rc < 0)
 		{
-#else
-		struct stat st;
-		if (fstat(fileno(file), &st) != 0)
-		{
-#endif
-			return absl::InternalError("fstat failed");
+			uv_fs_req_cleanup(&req);
+			return UvErrorStatus(rc, "fstat", path);
 		}
-		return st.st_size;
+
+		const auto size = static_cast<int64_t>(req.statbuf.st_size);
+		uv_fs_req_cleanup(&req);
+		return size;
 	}
 
 } // namespace bitcask

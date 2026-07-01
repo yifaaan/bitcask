@@ -1,7 +1,9 @@
 #pragma once
 
 #include "IOManager.h"
-#include <cstdio>
+
+#include <uv.h>
+
 #include <span>
 #include <string>
 #include <utility>
@@ -24,10 +26,10 @@ namespace bitcask
 		absl::StatusOr<int64_t> Size() override;
 
 	private:
-		explicit FileIO(FILE* file, std::string path)
-			: file(file), path(std::move(path)) {}
+		explicit FileIO(uv_file fd, std::string path)
+			: fd(fd), path(std::move(path)) {}
 
-		FILE* file;
+		uv_file fd = -1;
 		std::string path;
 	};
 
