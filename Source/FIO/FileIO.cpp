@@ -1,21 +1,43 @@
 #include "FileIO.h"
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
+
+#include <filesystem>
 #include <format>
+#include <system_error>
 #include <tuple>
 
 namespace bitcask
 {
 	namespace
 	{
-		absl::Status UvErrorStatus(int rc, std::string_view op, std::string_view path)
+		absl::Status SystemErrorStatus(std::string_view op, std::string_view path)
 		{
-			return absl::InternalError(std::format("{} failed for '{}': {}", op, path, uv_strerror(rc)));
+#ifdef _WIN32
+			const DWORD err = GetLastError();
+#else
+			const int err = errno;
+#endif
+			return absl::InternalError(std::format("{} failed for '{}': {}", op, path,
+				std::system_category().message(err)));
 		}
 	}
 
 	FileIO::~FileIO()
 	{
-		if (fd != -1)
+		if (IsValid())
 		{
 			std::ignore = Close();
 		}
@@ -23,143 +45,182 @@ namespace bitcask
 
 	absl::StatusOr<std::unique_ptr<FileIO>> FileIO::Open(std::string_view path)
 	{
-		uv_fs_t req;
 		const std::string pathString(path);
-		int rc = uv_fs_open(
-			uv_default_loop(),
-			&req,
-			pathString.c_str(),
-			UV_FS_O_RDWR | UV_FS_O_CREAT | UV_FS_O_APPEND,
-			0644,
+
+#ifdef _WIN32
+		const std::wstring widePath = std::filesystem::path(pathString).wstring();
+		const HANDLE h = CreateFileW(
+			widePath.c_str(),
+			GENERIC_READ | GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE,
+			nullptr,
+			OPEN_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL,
 			nullptr);
 
-		if (rc < 0)
+		if (h == INVALID_HANDLE_VALUE)
 		{
-			uv_fs_req_cleanup(&req);
-			return UvErrorStatus(rc, "open", pathString);
+			return SystemErrorStatus("open", pathString);
 		}
 
-		auto file = std::unique_ptr<FileIO>(new FileIO(static_cast<uv_file>(rc), pathString));
-		uv_fs_req_cleanup(&req);
-		return file;
+		return std::unique_ptr<FileIO>(new FileIO(h, pathString));
+#else
+		const int fd = ::open(
+			pathString.c_str(),
+			O_RDWR | O_CREAT | O_APPEND,
+			0644);
+
+		if (fd < 0)
+		{
+			return SystemErrorStatus("open", pathString);
+		}
+
+		return std::unique_ptr<FileIO>(new FileIO(static_cast<native_handle>(fd), pathString));
+#endif
 	}
 
 	absl::StatusOr<int64_t> FileIO::Read(std::span<std::byte> buf, int64_t offset)
 	{
-		if (fd == -1)
+		if (!IsValid())
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		uv_fs_t req;
-		uv_buf_t iov = uv_buf_init(reinterpret_cast<char*>(buf.data()), static_cast<unsigned int>(buf.size()));
+#ifdef _WIN32
+		OVERLAPPED overlapped{};
+		overlapped.Offset = static_cast<DWORD>(offset);
+		overlapped.OffsetHigh = static_cast<DWORD>(offset >> 32);
 
-		int rc = uv_fs_read(
-			uv_default_loop(),
-			&req,
-			fd,
-			&iov,
-			1,
-			offset,
-			nullptr);
+		DWORD bytesRead = 0;
+		if (!ReadFile(static_cast<HANDLE>(fd), buf.data(), static_cast<DWORD>(buf.size()), &bytesRead, &overlapped))
+		{
+			const DWORD err = GetLastError();
+			if (err == ERROR_HANDLE_EOF)
+			{
+				return static_cast<int64_t>(bytesRead);
+			}
+			return SystemErrorStatus("read", path);
+		}
+
+		return static_cast<int64_t>(bytesRead);
+#else
+		const auto bytes = buf.size();
+		ssize_t rc = pread(static_cast<int>(fd), buf.data(), bytes, offset);
 
 		if (rc < 0)
 		{
-			uv_fs_req_cleanup(&req);
-			return UvErrorStatus(rc, "read", path);
+			return SystemErrorStatus("read", path);
 		}
 
-		uv_fs_req_cleanup(&req);
 		return static_cast<int64_t>(rc);
+#endif
 	}
 
 	absl::StatusOr<int64_t> FileIO::Write(std::span<const std::byte> data)
 	{
-		if (fd == -1)
+		if (!IsValid())
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		uv_fs_t req;
-		uv_buf_t iov = uv_buf_init(
-			const_cast<char*>(reinterpret_cast<const char*>(data.data())),
-			static_cast<unsigned int>(data.size()));
+#ifdef _WIN32
+		LARGE_INTEGER li{};
+		li.QuadPart = 0;
+		if (!SetFilePointerEx(static_cast<HANDLE>(fd), li, nullptr, FILE_END))
+		{
+			return SystemErrorStatus("write", path);
+		}
 
-		int rc = uv_fs_write(
-			uv_default_loop(),
-			&req,
-			fd,
-			&iov,
-			1,
-			-1,
-			nullptr);
+		DWORD bytesWritten = 0;
+		if (!WriteFile(static_cast<HANDLE>(fd), data.data(), static_cast<DWORD>(data.size()), &bytesWritten, nullptr))
+		{
+			return SystemErrorStatus("write", path);
+		}
+
+		return static_cast<int64_t>(bytesWritten);
+#else
+		ssize_t rc = write(static_cast<int>(fd), data.data(), data.size());
 
 		if (rc < 0)
 		{
-			uv_fs_req_cleanup(&req);
-			return UvErrorStatus(rc, "write", path);
+			return SystemErrorStatus("write", path);
 		}
 
-		uv_fs_req_cleanup(&req);
 		return static_cast<int64_t>(rc);
+#endif
 	}
 
 	absl::Status FileIO::Sync()
 	{
-		if (fd == -1)
+		if (!IsValid())
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		uv_fs_t req;
-		int rc = uv_fs_fsync(uv_default_loop(), &req, fd, nullptr);
-		if (rc < 0)
+#ifdef _WIN32
+		if (!FlushFileBuffers(static_cast<HANDLE>(fd)))
 		{
-			uv_fs_req_cleanup(&req);
-			return UvErrorStatus(rc, "fsync", path);
+			return SystemErrorStatus("fsync", path);
 		}
+#else
+		if (fsync(static_cast<int>(fd)) < 0)
+		{
+			return SystemErrorStatus("fsync", path);
+		}
+#endif
 
-		uv_fs_req_cleanup(&req);
 		return absl::OkStatus();
 	}
 
 	absl::Status FileIO::Close()
 	{
-		if (fd == -1)
+		if (!IsValid())
 		{
 			return absl::OkStatus();
 		}
 
-		uv_fs_t req;
-		int rc = uv_fs_close(uv_default_loop(), &req, fd, nullptr);
-		uv_fs_req_cleanup(&req);
-		fd = -1;
-
-		if (rc < 0)
+#ifdef _WIN32
+		if (!CloseHandle(static_cast<HANDLE>(fd)))
 		{
-			return UvErrorStatus(rc, "close", path);
+			fd = invalid_handle_v;
+			return SystemErrorStatus("close", path);
 		}
+#else
+		if (::close(static_cast<int>(fd)) < 0)
+		{
+			fd = invalid_handle_v;
+			return SystemErrorStatus("close", path);
+		}
+#endif
+
+		fd = invalid_handle_v;
 		return absl::OkStatus();
 	}
 
 	absl::StatusOr<int64_t> FileIO::Size()
 	{
-		if (fd == -1)
+		if (!IsValid())
 		{
 			return absl::FailedPreconditionError("file not open");
 		}
 
-		uv_fs_t req;
-		int rc = uv_fs_fstat(uv_default_loop(), &req, fd, nullptr);
-		if (rc < 0)
+#ifdef _WIN32
+		LARGE_INTEGER li{};
+		if (!GetFileSizeEx(static_cast<HANDLE>(fd), &li))
 		{
-			uv_fs_req_cleanup(&req);
-			return UvErrorStatus(rc, "fstat", path);
+			return SystemErrorStatus("fstat", path);
 		}
 
-		const auto size = static_cast<int64_t>(req.statbuf.st_size);
-		uv_fs_req_cleanup(&req);
-		return size;
+		return static_cast<int64_t>(li.QuadPart);
+#else
+		struct stat st;
+		if (fstat(static_cast<int>(fd), &st) < 0)
+		{
+			return SystemErrorStatus("fstat", path);
+		}
+
+		return static_cast<int64_t>(st.st_size);
+#endif
 	}
 
 } // namespace bitcask

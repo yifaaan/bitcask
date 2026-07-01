@@ -2,10 +2,10 @@
 
 #include "IOManager.h"
 
-#include <uv.h>
-
+#include <memory>
 #include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace bitcask
@@ -16,7 +16,6 @@ namespace bitcask
 	public:
 		~FileIO() override;
 
-		// Open file for read/write + append + create
 		static absl::StatusOr<std::unique_ptr<FileIO>> Open(std::string_view path);
 
 		absl::StatusOr<int64_t> Read(std::span<std::byte> buf, int64_t offset) override;
@@ -26,10 +25,20 @@ namespace bitcask
 		absl::StatusOr<int64_t> Size() override;
 
 	private:
-		explicit FileIO(uv_file fd, std::string path)
+#ifdef _WIN32
+		using native_handle = void*;
+		static constexpr native_handle invalid_handle_v = nullptr;
+#else
+		using native_handle = int;
+		static constexpr native_handle invalid_handle_v = -1;
+#endif
+
+		explicit FileIO(native_handle fd, std::string path)
 			: fd(fd), path(std::move(path)) {}
 
-		uv_file fd = -1;
+		bool IsValid() const { return fd != invalid_handle_v; }
+
+		native_handle fd = invalid_handle_v;
 		std::string path;
 	};
 

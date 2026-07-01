@@ -8,7 +8,6 @@
       "name": "abseil",
       "version>=": "20240116.1"
     },
-    "libuv",
     {
       "name": "cpp-httplib",
       "version>=": "0.15.3"

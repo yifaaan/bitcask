@@ -13,7 +13,6 @@ endif()
 
 # === Dependencies ===
 find_package(absl CONFIG REQUIRED)
-find_package(libuv CONFIG REQUIRED)
 
 # === Bitcask Core Library ===
 add_library(bitcask_lib STATIC
@@ -24,7 +23,7 @@ add_library(bitcask_lib STATIC
     Source/FIO/IOManager.cpp
     Source/FIO/FileIO.cpp
     Source/Index/BTreeIndex.cpp
-)
+ )
 
 target_include_directories(bitcask_lib PUBLIC
     ${CMAKE_SOURCE_DIR}/Source
@@ -40,7 +39,6 @@ target_link_libraries(bitcask_lib PUBLIC
     absl::status
     absl::statusor
     absl::strings
-    $<IF:$<TARGET_EXISTS:libuv::uv_a>,libuv::uv_a,libuv::uv>
 )
 
 
