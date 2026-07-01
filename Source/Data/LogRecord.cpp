@@ -38,15 +38,15 @@ namespace bitcask
 		std::vector<std::byte> header(MaxLogRecordHeaderSize);
 		size_t headerSize = 0;
 
-		header[headerSize++] = static_cast<std::byte>(static_cast<uint8_t>(record.type));
-		headerSize += PutVarint(std::span<std::byte>(header).subspan(headerSize), static_cast<uint64_t>(record.key.size()));
-		headerSize += PutVarint(std::span<std::byte>(header).subspan(headerSize), static_cast<uint64_t>(record.value.size()));
+		header[headerSize++] = static_cast<std::byte>(record.type);
+		headerSize += PutVarint(std::span<std::byte>(header).subspan(headerSize), record.key.size());
+		headerSize += PutVarint(std::span<std::byte>(header).subspan(headerSize), record.value.size());
 		header.resize(headerSize);
 
 		LogRecordHeader headerMeta;
 		headerMeta.type = record.type;
-		headerMeta.keySize = static_cast<uint32_t>(record.key.size());
-		headerMeta.valueSize = static_cast<uint32_t>(record.value.size());
+		headerMeta.keySize = record.key.size();
+		headerMeta.valueSize = record.value.size();
 		const auto crc = CalcLogRecordCRC(record, headerMeta);
 		std::vector<std::byte> result(4 + headerSize + record.key.size() + record.value.size());
 

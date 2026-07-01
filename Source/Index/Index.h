@@ -31,4 +31,5 @@ namespace bitcask
 	};
 
 	std::unique_ptr<Index> NewIndex(IndexType type);
+
 } // namespace bitcask
