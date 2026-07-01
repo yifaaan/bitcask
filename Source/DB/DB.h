@@ -36,6 +36,9 @@ namespace bitcask
 		absl::Status Put(std::string_view key, std::string_view value);
 		absl::StatusOr<std::string> Get(std::string_view key);
 		absl::Status Delete(std::string_view key);
+		std::unique_ptr<Iterator> NewIterator(const IteratorOptions& options);
+		std::vector<std::string> ListKeys();
+		absl::Status Fold(const std::function<bool(std::string_view key, std::string_view value)>& fn);
 
 	private:
 		explicit DB(Options options);
@@ -51,6 +54,9 @@ namespace bitcask
 
 		// 从磁盘加载数据文件
 		absl::Status LoadDataFiles();
+		// 根据 LogRecordPos 读取对应的 value
+		absl::StatusOr<std::string> ReadValueFromPos(const LogRecordPos& pos) const;
+
 		// 从数据文件加载索引到内存
 		absl::Status LoadIndexFromDataFiles();
 

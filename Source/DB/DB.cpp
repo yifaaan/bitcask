@@ -296,24 +296,10 @@ namespace bitcask
 		return absl::OkStatus();
 	}
 
-	absl::StatusOr<std::string> DB::Get(std::string_view key)
+	absl::StatusOr<std::string> DB::ReadValueFromPos(const LogRecordPos& pos) const
 	{
-		std::shared_lock lock(mutex);
-		if (key.empty())
-		{
-			return absl::InvalidArgumentError("key is empty");
-		}
-
-		auto posOr = index->Get(key);
-		if (!posOr.ok())
-		{
-			return posOr.status();
-		}
-		const auto& pos = *posOr;
-
-		// 根据 pos 找到对应的数据文件
 		DataFile* file = nullptr;
-		if (pos.fid == activeFile->fid)
+		if (activeFile && pos.fid == activeFile->fid)
 		{
 			file = activeFile.get();
 		}
@@ -331,19 +317,73 @@ namespace bitcask
 			return absl::InternalError("data file not found for fid: " + std::to_string(pos.fid));
 		}
 
-		// 从数据文件中读取数据
-		std::vector<std::byte> buf(pos.size);
-		auto readResult = file->ReadLogRecord(pos.offset);
-		if (!readResult.ok())
+		auto recordOr = file->ReadLogRecord(pos.offset);
+		if (!recordOr.ok())
 		{
-			return readResult.status();
+			return recordOr.status();
 		}
-		auto& record = (*readResult).second;
+		auto& record = (*recordOr).second;
 		if (record.type == LogRecordType::Deleted)
 		{
 			return absl::NotFoundError("key has been deleted");
 		}
 		return record.value;
+	}
+
+	absl::StatusOr<std::string> DB::Get(std::string_view key)
+	{
+		std::shared_lock lock(mutex);
+		if (key.empty())
+		{
+			return absl::InvalidArgumentError("key is empty");
+		}
+
+		auto posOr = index->Get(key);
+		if (!posOr.ok())
+		{
+			return posOr.status();
+		}
+		return ReadValueFromPos(*posOr);
+	}
+
+	std::unique_ptr<Iterator> DB::NewIterator(const IteratorOptions& options)
+	{
+		auto raw = index->NewIterator();
+		return std::make_unique<Iterator>(std::move(raw), options,
+			[this](const LogRecordPos& pos) -> absl::StatusOr<std::string> {
+				std::shared_lock lock(mutex);
+				return ReadValueFromPos(pos);
+			});
+	}
+
+	std::vector<std::string> DB::ListKeys()
+	{
+		std::vector<std::string> keys;
+		keys.reserve(index->Size());
+		auto it = NewIterator(IteratorOptions{});
+		for (it->Rewind(); it->Valid(); it->Next())
+		{
+			keys.emplace_back(it->Key());
+		}
+		return keys;
+	}
+
+	absl::Status DB::Fold(const std::function<bool(std::string_view key, std::string_view value)>& fn)
+	{
+		auto it = NewIterator(IteratorOptions{});
+		for (it->Rewind(); it->Valid(); it->Next())
+		{
+			auto valueOr = it->Value();
+			if (!valueOr.ok())
+			{
+				return valueOr.status();
+			}
+			if (!fn(it->Key(), *valueOr))
+			{
+				break;
+			}
+		}
+		return absl::OkStatus();
 	}
 
 	absl::Status DB::Delete(std::string_view key)
