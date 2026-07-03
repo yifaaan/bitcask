@@ -29,28 +29,28 @@ namespace
 
 		void SetUp() override
 		{
-			dir_ = MakeUniqueDir();
+			dir = MakeUniqueDir();
 			std::error_code ec;
-			std::filesystem::remove_all(dir_, ec); // clean slate in case a prior run left it behind
+			std::filesystem::remove_all(dir, ec); // clean slate in case a prior run left it behind
 		}
 
 		void TearDown() override
 		{
 			std::error_code ec;
-			std::filesystem::remove_all(dir_, ec);
+			std::filesystem::remove_all(dir, ec);
 		}
 
 		Options MakeOptions(uint64_t maxDataFileSize = 10 * 1024 * 1024, bool syncOnWrite = false) const
 		{
 			Options opt;
-			opt.dataDir = dir_.string();
+			opt.dataDir = dir.string();
 			opt.maxDataFileSize = maxDataFileSize;
 			opt.syncOnWrite = syncOnWrite;
 			opt.indexType = IndexType::BTree;
 			return opt;
 		}
 
-		std::filesystem::path dir_;
+		std::filesystem::path dir;
 	};
 
 	TEST_F(DBTest, OpenCreatesDatabaseOnEmptyDirectory)

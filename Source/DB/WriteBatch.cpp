@@ -5,6 +5,11 @@
 
 namespace bitcask
 {
+	WriteBatch::WriteBatch(DB* db, WriteBatchOptions options)
+		: db(db), options(std::move(options))
+	{
+	}
+	
 	absl::Status WriteBatch::Put(std::string_view key, std::string_view value)
 	{
 		if (key.empty())
@@ -23,16 +28,9 @@ namespace bitcask
 			return absl::InvalidArgumentError("Key cannot be empty");
 		}
 		std::scoped_lock lock(mutex);
-		auto pos = db->index->Get(key);
-		if (!pos.ok())
-		{
-			if (pendingWrites.contains(std::string(key)))
-			{
-				pendingWrites.erase(std::string(key));
-			}
-			return absl::NotFoundError("Key not found");
-		}
-		pendingWrites.erase(std::string(key));
+		// 暂存一条删除记录, 在 Commit 时统一写墓碑并更新索引。
+		// 对同一 key, Delete 会覆盖之前 pending 的 Put; 删除不存在的 key 视作 no-op。
+		pendingWrites[std::string(key)] = PendingWrite{LogRecordType::Deleted, ""};
 		return absl::OkStatus();
 	}
 
