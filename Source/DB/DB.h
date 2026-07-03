@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Data/DataFile.h"
+#include "DB/WriteBatch.h"
 #include "Index/Index.h"
 
 #include <cstdint>
@@ -36,6 +37,10 @@ namespace bitcask
 		absl::Status Put(std::string_view key, std::string_view value);
 		absl::StatusOr<std::string> Get(std::string_view key);
 		absl::Status Delete(std::string_view key);
+
+		// 创建一个批量写事务;同一 DB 上的多个 WriteBatch 串行提交
+      	std::unique_ptr<WriteBatch> NewWriteBatch(const WriteBatchOptions& options = {});
+
 		std::unique_ptr<Iterator> NewIterator(const IteratorOptions& options);
 		std::vector<std::string> ListKeys();
 		absl::Status Fold(const std::function<bool(std::string_view key, std::string_view value)>& fn);
@@ -46,11 +51,16 @@ namespace bitcask
 		absl::Status Close();
 
 	private:
+		friend class WriteBatch;
 		explicit DB(Options options);
 
 		// 1. 扫描并打开数据目录下的所有数据文件
 		// 2. 加载索引到内存
 		absl::Status Initialize();
+
+		// 将 LogRecord 追加到当前活跃数据文件中
+		// 需要加锁然后再调用
+		absl::StatusOr<LogRecordPos> AppendLogRecordWithLock(const LogRecord& record);
 		absl::StatusOr<LogRecordPos> AppendLogRecord(const LogRecord& record);
 		
 		// 设置当前活跃数据文件
@@ -75,6 +85,8 @@ namespace bitcask
 		std::map<uint32_t, std::unique_ptr<DataFile>> olderFiles;
 		// Close() 之后置为 true，后续读写操作均返回错误
 		bool closed = false;
+		// 当前最新的事务序列号, 全局递增
+		std::atomic_uint64_t currentSeqNum = 0;
 	};
 
 } // namespace bitcask

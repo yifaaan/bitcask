@@ -1,5 +1,7 @@
 #include "DB.h"
 
+#include "DB/WriteBatch.h"
+
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
@@ -9,8 +11,33 @@
 
 namespace
 {
-	absl::Status LoadIndexFromOneFile(bitcask::Index* index, const bitcask::DataFile& file, uint32_t fid, int64_t* writeOffset = nullptr)
+	// 解析 LogRecord 的 key，提取事务序列号和原始 key
+	std::pair<uint64_t, std::string> ParseLogRecordKey(std::string_view key)
 	{
+		auto buf = std::span<const std::byte>(reinterpret_cast<const std::byte*>(key.data()), key.size());
+		auto [seqNum, nextIdx] = *bitcask::GetVarint(buf);
+		return {seqNum, std::string(key.substr(nextIdx))};
+	}
+
+	absl::Status LoadIndexFromOneFile(bitcask::Index* index, const bitcask::DataFile& file, uint32_t fid, std::unordered_map<uint64_t, std::vector<bitcask::TransactionLogRecord>>& txnRecords, uint64_t& maxSeqNum, int64_t* writeOffset = nullptr)
+	{
+		auto updateIndex = [&](std::string_view key, bitcask::LogRecordPos pos, bitcask::LogRecordType type) -> absl::Status {
+			if (type == bitcask::LogRecordType::Deleted)
+			{
+				if (auto status = index->Delete(key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+				{
+					return status;
+				}
+			}
+			else
+			{
+				if (auto status = index->Put(key, pos); !status.ok())
+				{
+					return status;
+				}
+			}
+			return absl::OkStatus();
+		};
 		int64_t offset = 0;
 		while (true)
 		{
@@ -24,35 +51,58 @@ namespace
 				return recordOr.status();
 			}
 			auto& [size, record] = *recordOr;
-			auto pos = bitcask::LogRecordPos
-			{
+			auto pos = bitcask::LogRecordPos{
 				.fid = file.fid,
 				.offset = offset,
 				.size = size,
 			};
-			if (record.type == bitcask::LogRecordType::Deleted)
+
+			// 解析读到的record 是否包含事务序列号
+			auto [seqNum, originalKey] = ParseLogRecordKey(record.key);
+		
+			if (seqNum == bitcask::NoTxnSeqNum)
 			{
-				if (auto status = index->Delete(record.key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+				// 非事务写入，直接更新索引
+				if (auto status = updateIndex(originalKey, pos, record.type); !status.ok())
 				{
 					return status;
 				}
 			}
 			else
 			{
-				if (auto status = index->Put(record.key, pos); !status.ok())
+				// 有事务完成的标记
+				if (record.type == bitcask::LogRecordType::TxnFinished)
 				{
-					return status;
+					// 将该事务的所有记录更新到索引中
+					for (auto& txnRecord : txnRecords[seqNum])
+					{
+						if (auto status = updateIndex(txnRecord.record.key, txnRecord.pos, txnRecord.record.type); !status.ok())
+						{
+							return status;
+						}
+					}
+					// 删除该事务的记录
+					txnRecords.erase(seqNum);
+				}
+				else
+				{
+					record.key = originalKey;
+					// 暂存该事务的记录
+					txnRecords[seqNum].push_back({record, pos});
 				}
 			}
+			// 更新最大事务序列号
+			maxSeqNum = std::max(maxSeqNum, seqNum);
 			offset += size;
 		}
+
 		if (writeOffset)
 		{
 			*writeOffset = offset;
 		}
 		return absl::OkStatus();
 	}
-}
+} // namespace
 
 namespace bitcask
 {
@@ -175,10 +225,14 @@ namespace bitcask
 			return absl::OkStatus();
 		}
 
+		// 暂存事务数据
+		std::unordered_map<uint64_t, std::vector<TransactionLogRecord>> txnRecords;
+		// 扫描过程中更新最大事务序列号
+		uint64_t maxSeqNum = 0;
 		// 遍历所有数据文件，加载索引到内存
 		for (const auto& [fid, file] : olderFiles)
 		{
-			if (auto status = LoadIndexFromOneFile(index.get(), *file, fid); !status.ok())
+			if (auto status = LoadIndexFromOneFile(index.get(), *file, fid, txnRecords, maxSeqNum); !status.ok())
 			{
 				return status;
 			}
@@ -187,11 +241,15 @@ namespace bitcask
 		// Load active file
 		if (activeFile)
 		{
-			if (auto status = LoadIndexFromOneFile(index.get(), *activeFile, activeFile->fid, &activeFile->writeOffset); !status.ok())
+			if (auto status = LoadIndexFromOneFile(index.get(), *activeFile, activeFile->fid, txnRecords, maxSeqNum, &activeFile->writeOffset); !status.ok())
 			{
 				return status;
 			}
 		}
+
+		// 更新DB的当前事务序列号
+		currentSeqNum = maxSeqNum;
+
 		return absl::OkStatus();
 	}
 
@@ -210,14 +268,13 @@ namespace bitcask
 		}
 
 		// Create a log record
-		LogRecord record
-		{
-			.key = std::string(key),
+		LogRecord record{
+			.key = LogRecordKeyWithSeqNum(key, NoTxnSeqNum),
 			.value = std::string(value),
 			.type = LogRecordType::Normal,
 		};
 
-		auto posOr = AppendLogRecord(record);
+		auto posOr = AppendLogRecordWithLock(record);
 		if (!posOr.ok())
 		{
 			return posOr.status();
@@ -232,10 +289,14 @@ namespace bitcask
 		return absl::OkStatus();
 	}
 
-	absl::StatusOr<LogRecordPos> DB::AppendLogRecord(const LogRecord& record)
+	absl::StatusOr<LogRecordPos> DB::AppendLogRecordWithLock(const LogRecord& record)
 	{
 		std::unique_lock lock(mutex);
+		return AppendLogRecord(record);
+	}
 
+	absl::StatusOr<LogRecordPos> DB::AppendLogRecord(const LogRecord& record)
+	{
 		if (closed)
 		{
 			return absl::FailedPreconditionError("db is closed");
@@ -282,8 +343,7 @@ namespace bitcask
 			}
 		}
 		// 构造内存索引
-		auto pos = LogRecordPos
-		{
+		auto pos = LogRecordPos{
 			.fid = activeFile->fid,
 			.offset = writeOffset,
 			.size = int64_t(len),
@@ -366,10 +426,10 @@ namespace bitcask
 	{
 		auto raw = index->NewIterator();
 		return std::make_unique<Iterator>(std::move(raw), options,
-			[this](const LogRecordPos& pos) -> absl::StatusOr<std::string> {
-				std::shared_lock lock(mutex);
-				return ReadValueFromPos(pos);
-			});
+										  [this](const LogRecordPos& pos) -> absl::StatusOr<std::string> {
+											  std::shared_lock lock(mutex);
+											  return ReadValueFromPos(pos);
+										  });
 	}
 
 	std::vector<std::string> DB::ListKeys()
@@ -422,12 +482,11 @@ namespace bitcask
 		}
 
 		// Create a log record for deletion
-		auto record = LogRecord
-		{
-			.key = std::string(key),
+		auto record = LogRecord{
+			.key = LogRecordKeyWithSeqNum(key, NoTxnSeqNum),
 			.type = LogRecordType::Deleted,
 		};
-		auto posOr = AppendLogRecord(record);
+		auto posOr = AppendLogRecordWithLock(record);
 		if (!posOr.ok())
 		{
 			return posOr.status();
@@ -437,6 +496,11 @@ namespace bitcask
 			return status;
 		}
 		return absl::OkStatus();
+	}
+
+	std::unique_ptr<WriteBatch> DB::NewWriteBatch(const WriteBatchOptions& options)
+	{
+		return std::unique_ptr<WriteBatch>(new WriteBatch(this, options));
 	}
 
 	absl::Status DB::Sync()
