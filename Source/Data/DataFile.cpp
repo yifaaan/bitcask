@@ -39,9 +39,9 @@ namespace bitcask
 		uint32_t ReadLittleEndian32(std::span<const std::byte> buf)
 		{
 			return static_cast<uint32_t>(std::to_integer<uint8_t>(buf[0])) |
-				(static_cast<uint32_t>(std::to_integer<uint8_t>(buf[1])) << 8) |
-				(static_cast<uint32_t>(std::to_integer<uint8_t>(buf[2])) << 16) |
-				(static_cast<uint32_t>(std::to_integer<uint8_t>(buf[3])) << 24);
+				   (static_cast<uint32_t>(std::to_integer<uint8_t>(buf[1])) << 8) |
+				   (static_cast<uint32_t>(std::to_integer<uint8_t>(buf[2])) << 16) |
+				   (static_cast<uint32_t>(std::to_integer<uint8_t>(buf[3])) << 24);
 		}
 
 	} // namespace
@@ -56,6 +56,16 @@ namespace bitcask
 	absl::StatusOr<std::unique_ptr<DataFile>> bitcask::DataFile::Open(std::string_view dirPath, uint32_t fid, IOType ioType)
 	{
 		return OpenNamedFile(dirPath, DataFileName(fid), fid, ioType);
+	}
+
+	absl::StatusOr<std::unique_ptr<DataFile>> DataFile::OpenHint(std::string_view dirPath, uint32_t fid)
+	{
+		return OpenNamedFile(dirPath, HintFileName, fid, IOType::Standard);
+	}
+
+	absl::StatusOr<std::unique_ptr<DataFile>> DataFile::OpenMergeFinishedFile(std::string_view dirPath)
+	{
+		return OpenNamedFile(dirPath, MergeFinishedFileName, 0, IOType::Standard);
 	}
 
 	absl::Status DataFile::Sync()
@@ -161,9 +171,62 @@ namespace bitcask
 		return std::make_pair(totalSize, std::move(record));
 	}
 
-
 	absl::Status DataFile::Close()
 	{
 		return io->Close();
+	}
+
+	absl::Status DataFile::WriteHintRecord(std::string_view key, const LogRecordPos& pos)
+	{
+		// 将 LogRecordPos 编码为字节序列, 作为 hint 记录的 value
+		auto [posBytes, posSize] = EncodeLogRecordPos(pos);
+		if (posSize == 0)
+		{
+			return absl::InvalidArgumentError("invalid LogRecordPos: offset or size is negative");
+		}
+
+		// hint 记录本质上是一条 Normal 类型的 LogRecord, value 为编码后的 LogRecordPos
+		LogRecord record;
+		record.key = std::string(key);
+		record.value.assign(reinterpret_cast<const char*>(posBytes.data()), static_cast<size_t>(posSize));
+		record.type = LogRecordType::Normal;
+
+		auto encoded = EncodeLogRecord(record);
+		if (encoded.empty())
+		{
+			return absl::InternalError("failed to encode hint record");
+		}
+
+		auto writeOr = Write(encoded);
+		if (!writeOr.ok())
+		{
+			return writeOr.status();
+		}
+		return absl::OkStatus();
+	}
+
+	absl::StatusOr<std::pair<int64_t, HintRecord>> DataFile::ReadHintRecord(int64_t offset) const
+	{
+		auto recOr = ReadLogRecord(offset);
+		if (!recOr.ok())
+		{
+			return recOr.status();
+		}
+		auto& [size, record] = *recOr;
+
+		// hint 记录的 value 是编码后的 LogRecordPos, 解码必须正好消耗整个 value
+		auto valueSpan = std::span<const std::byte>(
+			reinterpret_cast<const std::byte*>(record.value.data()), record.value.size());
+		auto [posOpt, posLen] = DecodeLogRecordPos(valueSpan);
+		if (!posOpt || posLen != static_cast<int64_t>(record.value.size()))
+		{
+			return absl::InternalError("invalid hint record: failed to decode LogRecordPos");
+		}
+
+		HintRecord hint{
+			.key = std::move(record.key),
+			.pos = *posOpt,
+		};
+		return std::make_pair(size, std::move(hint));
 	}
 } // namespace bitcask

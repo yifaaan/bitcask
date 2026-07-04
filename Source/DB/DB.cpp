@@ -59,7 +59,7 @@ namespace
 
 			// 解析读到的record 是否包含事务序列号
 			auto [seqNum, originalKey] = ParseLogRecordKey(record.key);
-		
+
 			if (seqNum == bitcask::NoTxnSeqNum)
 			{
 				// 非事务写入，直接更新索引
@@ -121,12 +121,23 @@ namespace bitcask
 		{
 			return status;
 		}
+		// 整合上一次未完成的 merge(若存在), 必须在加载数据文件之前完成
+		if (auto status = db->LoadMergeFiles(); !status.ok())
+		{
+			return status;
+		}
+
 		// 加载数据文件
 		if (auto status = db->LoadDataFiles(); !status.ok())
 		{
 			return status;
 		}
 
+		// 加载 hint 文件索引到内存
+		if (auto status = db->LoadIndexFromHintFile(); !status.ok())
+		{
+			return status;
+		}
 		// 加载内存索引
 		if (auto status = db->LoadIndexFromDataFiles(); !status.ok())
 		{
@@ -225,6 +236,20 @@ namespace bitcask
 			return absl::OkStatus();
 		}
 
+		// 如果发生过merge, 则需要从 merge-finished 记录中获取未合并的起始 fid, 以便在加载索引时跳过已合并的文件(因为已合并的文件的索引已经通过hint文件加载到内存了)
+		auto hasMerged = false;
+		auto nonMergedFid = uint32_t(0);
+		if (auto fidOr = GetNonMergedFid(); fidOr.ok())
+		{
+			nonMergedFid = *fidOr;
+			hasMerged = true;
+		}
+		else if (fidOr.status().code() != absl::StatusCode::kNotFound)
+		{
+			return fidOr.status();
+		}
+
+
 		// 暂存事务数据
 		std::unordered_map<uint64_t, std::vector<TransactionLogRecord>> txnRecords;
 		// 扫描过程中更新最大事务序列号
@@ -232,6 +257,11 @@ namespace bitcask
 		// 遍历所有数据文件，加载索引到内存
 		for (const auto& [fid, file] : olderFiles)
 		{
+			if (hasMerged && fid < nonMergedFid)
+			{
+				// 已合并的文件的索引已经通过hint文件加载到内存了, 跳过
+				continue;
+			}
 			if (auto status = LoadIndexFromOneFile(index.get(), *file, fid, txnRecords, maxSeqNum); !status.ok())
 			{
 				return status;
@@ -357,6 +387,12 @@ namespace bitcask
 		if (activeFile)
 		{
 			initialFileId = activeFile->fid + 1;
+		}
+		else if (!olderFiles.empty())
+		{
+			// activeFile 已被移走(例如 Merge 中), 从 olderFiles 取最大 fid 续号,
+			// 否则会重新打开已存在的 fid 0 文件
+			initialFileId = olderFiles.rbegin()->first + 1;
 		}
 
 		auto newFile = DataFile::Open(options.dataDir, initialFileId, IOType::Standard);
@@ -545,4 +581,396 @@ namespace bitcask
 		return result;
 	}
 
+	absl::Status DB::Merge()
+	{
+		std::vector<DataFile*> filesToMerge;
+		uint32_t unMergedFid = 0;
+		{
+			std::unique_lock lock(mutex);
+			if (closed)
+			{
+				return absl::FailedPreconditionError("db is closed");
+			}
+			if (!activeFile)
+			{
+				return absl::OkStatus();
+			}
+			if (merging.exchange(true))
+			{
+				return absl::FailedPreconditionError("merge is already in progress");
+			}
+
+			// 创建新的活跃文件用于写入
+			if (auto status = activeFile->Sync(); !status.ok())
+			{
+				merging = false;
+				return status;
+			}
+			olderFiles[activeFile->fid] = std::move(activeFile);
+			if (auto status = SetActiveFile(); !status.ok())
+			{
+				merging = false;
+				return status;
+			}
+
+			filesToMerge.reserve(olderFiles.size());
+			for (auto& [fid, file] : olderFiles)
+			{
+				filesToMerge.push_back(file.get());
+			}
+			unMergedFid = filesToMerge.back()->fid + 1;
+		}
+
+		auto mergePath = GetMergePath();
+		if (std::filesystem::exists(mergePath))
+		{
+			std::filesystem::remove_all(mergePath);
+		}
+
+		std::filesystem::create_directories(mergePath);
+		// 打开新的DB实例
+		auto mergeOptions = options;
+		mergeOptions.dataDir = mergePath;
+		mergeOptions.syncOnWrite = false;
+		auto mergeDbOr = DB::Open(mergeOptions);
+		if (!mergeDbOr.ok())
+		{
+			merging = false;
+			return mergeDbOr.status();
+		}
+		auto mergeDb = std::move(*mergeDbOr);
+
+		// 打开hint文件用于写入索引
+		auto hintFileOr = DataFile::OpenHint(mergePath, 0);
+		if (!hintFileOr.ok())
+		{
+			merging = false;
+			return hintFileOr.status();
+		}
+		auto hintFile = std::move(*hintFileOr);
+
+		// 遍历所有旧数据文件，读取每条记录并写入到新的DB中
+		for (auto* file : filesToMerge)
+		{
+			int64_t offset = 0;
+			while (true)
+			{
+				auto recordOr = file->ReadLogRecord(offset);
+				if (!recordOr.ok())
+				{
+					if (recordOr.status().code() == absl::StatusCode::kOutOfRange)
+					{
+						break;
+					}
+					merging = false;
+					return recordOr.status();
+				}
+				auto& [size, record] = *recordOr;
+
+				auto originalKey = ParseLogRecordKey(record.key).second;
+				auto posOr = index->Get(originalKey);
+				if (!posOr.ok())
+				{
+					if (posOr.status().code() == absl::StatusCode::kNotFound)
+					{
+						offset += size;
+						continue;
+					}
+					merging = false;
+					return posOr.status();
+				}
+				auto pos = std::move(*posOr);
+				if (pos.fid == file->fid && pos.offset == offset)
+				{
+					// 有效记录, 不需要seqNum了
+					record.key = LogRecordKeyWithSeqNum(originalKey, NoTxnSeqNum);
+					auto writePosOr = mergeDb->AppendLogRecord(record);
+					if (!writePosOr.ok())
+					{
+						merging = false;
+						return writePosOr.status();
+					}
+					auto writePos = std::move(*writePosOr);
+					// 将索引写入hint文件
+					if (auto status = hintFile->WriteHintRecord(originalKey, writePos); !status.ok())
+					{
+						merging = false;
+						return status;
+					}
+				}
+				offset += size;
+			}
+		}
+
+		// 持久化
+		if (auto status = hintFile->Sync(); !status.ok())
+		{
+			merging = false;
+			return status;
+		}
+		if (auto status = mergeDb->Sync(); !status.ok())
+		{
+			merging = false;
+			return status;
+		}
+		// 标识merge完成的文件
+		auto mergeFinishedFileOr = DataFile::OpenMergeFinishedFile(mergePath);
+		if (!mergeFinishedFileOr.ok())
+		{
+			merging = false;
+			return mergeFinishedFileOr.status();
+		}
+		auto mergeFinishedFile = std::move(*mergeFinishedFileOr);
+		LogRecord mergeFinishedRecord{
+			.key = std::string(MergeFinishedKey),
+			.value = std::to_string(unMergedFid),
+			.type = LogRecordType::Normal,
+		};
+		auto encodedRecord = EncodeLogRecord(mergeFinishedRecord);
+		if (auto status = mergeFinishedFile->Write(encodedRecord); !status.ok())
+		{
+			merging = false;
+			return status.status();
+		}
+		if (auto status = mergeFinishedFile->Sync(); !status.ok())
+		{
+			merging = false;
+			return status;
+		}
+		merging = false;
+		return absl::OkStatus();
+	}
+
+	std::string DB::GetMergePath() const
+	{
+		auto dataPath = std::filesystem::path(options.dataDir);
+		auto dirName = dataPath.filename();
+		if (dirName.empty())
+		{
+			dataPath = dataPath.parent_path();
+			dirName = dataPath.filename();
+		}
+
+		return (dataPath.parent_path() / (dirName.string() + std::string(MergeDirSuffix))).string();
+	}
+
+	absl::Status DB::LoadMergeFiles()
+	{
+		auto mergePath = GetMergePath();
+		std::error_code ec;
+		if (!std::filesystem::exists(mergePath, ec))
+		{
+			if (ec)
+			{
+				return absl::InternalError("failed to check merge directory: " + ec.message());
+			}
+			return absl::OkStatus();
+		}
+
+		// 收集 mergePath 下的文件, 并确认 merge 是否已完成(存在 merge-finished 标记)
+		bool mergeFinished = false;
+		std::vector<std::filesystem::path> mergeFiles;
+		for (const auto& entry : std::filesystem::directory_iterator(mergePath, ec))
+		{
+			if (ec)
+			{
+				return absl::InternalError("failed to read merge directory: " + ec.message());
+			}
+			if (!entry.is_regular_file())
+			{
+				continue;
+			}
+			if (entry.path().filename() == MergeFinishedFileName)
+			{
+				mergeFinished = true;
+				continue;
+			}
+			mergeFiles.push_back(entry.path());
+		}
+		// directory_iterator 构造失败时迭代器为空、循环体不执行, 必须在循环外再判一次 ec
+		if (ec)
+		{
+			return absl::InternalError("failed to read merge directory: " + ec.message());
+		}
+		if (!mergeFinished)
+		{
+			// merge 未完成, 保留 mergePath 等待下次启动重试
+			return absl::OkStatus();
+		}
+
+		auto nonMergedFidOr = GetNonMergedFid();
+		if (!nonMergedFidOr.ok())
+		{
+			return nonMergedFidOr.status();
+		}
+		const auto nonMergedFid = *nonMergedFidOr;
+
+		// mergeDb 是全新实例, 其 .data 文件 fid 从 0 开始; 统计产物文件数 K
+		uint32_t mergedCount = 0;
+		for (const auto& p : mergeFiles)
+		{
+			if (p.extension() == DataFileNameSuffix)
+			{
+				++mergedCount;
+			}
+		}
+
+		const auto dataDir = std::filesystem::path(options.dataDir);
+
+		// 1) 删除所有已被合并的旧数据文件 (fid < nonMergedFid)
+		for (uint32_t fid = 0; fid < nonMergedFid; ++fid)
+		{
+			std::filesystem::remove(dataDir / DataFileName(fid), ec);
+			if (ec)
+			{
+				return absl::InternalError("failed to remove old data file: " + ec.message());
+			}
+		}
+
+		// 2) 把幸存的并发写入文件 (fid >= nonMergedFid) 整体上移 K 个 fid, 为合并产物腾出
+		//    [0, K) 的低 fid 区间: 合并快照(fid 较小)在索引重建时会被并发写入正确覆盖,
+		//    同时避免 rename 覆盖掉并发文件造成丢数据。从高到低 rename 规避级联冲突。
+		if (mergedCount > 0)
+		{
+			std::vector<uint32_t> concurrentFids;
+			for (const auto& entry : std::filesystem::directory_iterator(dataDir, ec))
+			{
+				if (ec)
+				{
+					return absl::InternalError("failed to read data directory: " + ec.message());
+				}
+				if (entry.path().extension() != DataFileNameSuffix)
+				{
+					continue;
+				}
+				uint32_t fid = 0;
+				const auto stem = entry.path().stem().string();
+				auto [ptr, err] = std::from_chars(stem.data(), stem.data() + stem.size(), fid);
+				if (err != std::errc() || ptr != stem.data() + stem.size() || fid < nonMergedFid)
+				{
+					continue;
+				}
+				concurrentFids.push_back(fid);
+			}
+			if (ec)
+			{
+				return absl::InternalError("failed to iterate data directory: " + ec.message());
+			}
+			std::sort(concurrentFids.rbegin(), concurrentFids.rend());
+			for (auto fid : concurrentFids)
+			{
+				std::filesystem::rename(dataDir / DataFileName(fid), dataDir / DataFileName(fid + mergedCount), ec);
+				if (ec)
+				{
+					return absl::InternalError("failed to shift concurrent data file " + std::to_string(fid) + ": " + ec.message());
+				}
+			}
+		}
+
+		// 3) 将合并产物搬入 dataDir, 保持 mergeDb 分配的 fid(与 hint-index 中记录的 fid 一致)
+		for (const auto& filePath : mergeFiles)
+		{
+			auto targetPath = dataDir / filePath.filename();
+			if (filePath.extension() != DataFileNameSuffix && std::filesystem::exists(targetPath, ec))
+			{
+				if (ec)
+				{
+					return absl::InternalError("failed to check merged file target " + targetPath.filename().string() + ": " + ec.message());
+				}
+				std::filesystem::remove(targetPath, ec);
+				if (ec)
+				{
+					return absl::InternalError("failed to remove old merged file target " + targetPath.filename().string() + ": " + ec.message());
+				}
+			}
+			std::filesystem::rename(filePath, targetPath, ec);
+			if (ec)
+			{
+				return absl::InternalError("failed to move merged file " + filePath.filename().string() + ": " + ec.message());
+			}
+		}
+
+		// 4) 清理 merge 目录(含 merge-finished 标记)
+		std::filesystem::remove_all(mergePath, ec);
+		if (ec)
+		{
+			return absl::InternalError("failed to remove merge directory: " + ec.message());
+		}
+		return absl::OkStatus();
+	}
+
+	absl::StatusOr<uint32_t> DB::GetNonMergedFid()
+	{
+		const auto mergePath = GetMergePath();
+		const auto mergeFinishedPath = std::filesystem::path(mergePath) / MergeFinishedFileName;
+		std::error_code ec;
+		if (!std::filesystem::exists(mergeFinishedPath, ec))
+		{
+			if (ec)
+			{
+				return absl::InternalError("failed to check merge-finished file: " + ec.message());
+			}
+			return absl::NotFoundError("merge-finished file not found");
+		}
+
+		auto mergeFinishedFileOr = DataFile::OpenMergeFinishedFile(mergePath);
+		if (!mergeFinishedFileOr.ok())
+		{
+			return mergeFinishedFileOr.status();
+		}
+		auto& mergeFinishedFile = *mergeFinishedFileOr;
+
+		auto recordOr = mergeFinishedFile->ReadLogRecord(0);
+		if (!recordOr.ok())
+		{
+			return recordOr.status();
+		}
+		auto& record = (*recordOr).second;
+
+		// merge-finished 记录的 value 是未合并起始 fid 的十进制字符串
+		uint32_t fid = 0;
+		auto [ptr, err] = std::from_chars(record.value.data(), record.value.data() + record.value.size(), fid);
+		if (err != std::errc() || ptr != record.value.data() + record.value.size())
+		{
+			return absl::InternalError("invalid merge-finished record: failed to parse fid");
+		}
+		return fid;
+	}
+
+	absl::Status DB::LoadIndexFromHintFile()
+	{
+		auto hintFileName = std::filesystem::path(options.dataDir) / HintFileName;
+		if (!std::filesystem::exists(hintFileName))
+		{
+			return absl::OkStatus();
+		}
+
+		auto hintFileOr = DataFile::OpenHint(options.dataDir, 0);
+		if (!hintFileOr.ok())
+		{
+			return hintFileOr.status();
+		}
+		auto hintFile = std::move(*hintFileOr);
+
+		int64_t offset = 0;
+		while (true)
+		{
+			auto recordOr = hintFile->ReadHintRecord(offset);
+			if (!recordOr.ok())
+			{
+				if (recordOr.status().code() == absl::StatusCode::kOutOfRange)
+				{
+					break;
+				}
+				return recordOr.status();
+			}
+			auto& [size, record] = *recordOr;
+			if (auto status = index->Put(record.key, record.pos); !status.ok())
+			{
+				return status;
+			}
+			offset += size;
+		}
+		return absl::OkStatus();
+	}
 } // namespace bitcask

@@ -16,6 +16,8 @@
 namespace bitcask
 {
 
+	constexpr std::string_view MergeDirSuffix = "_merge";
+	constexpr std::string_view MergeFinishedKey = "merge_finished";
 	struct Options
 	{
 		// 数据目录
@@ -50,6 +52,7 @@ namespace bitcask
 		// 关闭数据库，同步并关闭所有数据文件；关闭后其余方法均返回错误。可重复调用。
 		absl::Status Close();
 
+		absl::Status Merge();
 	private:
 		friend class WriteBatch;
 		explicit DB(Options options);
@@ -75,6 +78,15 @@ namespace bitcask
 		// 从数据文件加载索引到内存
 		absl::Status LoadIndexFromDataFiles();
 
+		std::string GetMergePath() const;
+
+		absl::Status LoadMergeFiles();
+
+		absl::StatusOr<uint32_t> GetNonMergedFid();
+
+		// 从hint文件加载索引到内存
+		absl::Status LoadIndexFromHintFile();
+
 		Options options;
 		mutable std::shared_mutex mutex;
 		// 内存索引
@@ -87,6 +99,8 @@ namespace bitcask
 		bool closed = false;
 		// 当前最新的事务序列号, 全局递增
 		std::atomic_uint64_t currentSeqNum = 0;
+		// 是否正在进行 Merge 操作
+		std::atomic_bool merging = false;
 	};
 
 } // namespace bitcask

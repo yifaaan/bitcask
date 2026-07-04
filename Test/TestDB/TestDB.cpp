@@ -38,6 +38,7 @@ namespace
 		{
 			std::error_code ec;
 			std::filesystem::remove_all(dir, ec);
+			std::filesystem::remove_all(MergeDir(), ec);
 		}
 
 		Options MakeOptions(uint64_t maxDataFileSize = 10 * 1024 * 1024, bool syncOnWrite = false) const
@@ -48,6 +49,11 @@ namespace
 			opt.syncOnWrite = syncOnWrite;
 			opt.indexType = IndexType::BTree;
 			return opt;
+		}
+
+		std::filesystem::path MergeDir() const
+		{
+			return dir.parent_path() / (dir.filename().string() + std::string(MergeDirSuffix));
 		}
 
 		std::filesystem::path dir;
@@ -358,6 +364,202 @@ namespace
 		auto k2 = db->Get("k2");
 		ASSERT_TRUE(k2.ok()) << k2.status();
 		EXPECT_EQ(*k2, "v2");
+	}
+
+	TEST_F(DBTest, MergeKeepsDatabaseUsableInCurrentInstance)
+	{
+		auto dbOr = DB::Open(MakeOptions(128, /*syncOnWrite=*/true));
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("stale", "v1").ok());
+		ASSERT_TRUE(db->Put("stale", "v2").ok());
+		ASSERT_TRUE(db->Put("keep", "live").ok());
+		ASSERT_TRUE(db->Put("gone", "value").ok());
+		ASSERT_TRUE(db->Delete("gone").ok());
+
+		ASSERT_TRUE(db->Merge().ok());
+		EXPECT_TRUE(std::filesystem::exists(MergeDir()));
+
+		auto stale = db->Get("stale");
+		ASSERT_TRUE(stale.ok()) << stale.status();
+		EXPECT_EQ(*stale, "v2");
+
+		auto keep = db->Get("keep");
+		ASSERT_TRUE(keep.ok()) << keep.status();
+		EXPECT_EQ(*keep, "live");
+
+		auto gone = db->Get("gone");
+		EXPECT_FALSE(gone.ok());
+		EXPECT_EQ(gone.status().code(), absl::StatusCode::kNotFound);
+
+		ASSERT_TRUE(db->Put("after-merge", "ok").ok());
+		auto afterMerge = db->Get("after-merge");
+		ASSERT_TRUE(afterMerge.ok()) << afterMerge.status();
+		EXPECT_EQ(*afterMerge, "ok");
+	}
+
+	TEST_F(DBTest, MergeIsAppliedOnReopen)
+	{
+		{
+			auto dbOr = DB::Open(MakeOptions(160, /*syncOnWrite=*/true));
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+
+			for (int i = 0; i < 12; ++i)
+			{
+				ASSERT_TRUE(db->Put("key-" + std::to_string(i), "old-" + std::to_string(i)).ok());
+			}
+			for (int i = 0; i < 12; ++i)
+			{
+				ASSERT_TRUE(db->Put("key-" + std::to_string(i), "new-" + std::to_string(i)).ok());
+			}
+			ASSERT_TRUE(db->Put("deleted", "value").ok());
+			ASSERT_TRUE(db->Delete("deleted").ok());
+			ASSERT_TRUE(db->Put("survivor", "live").ok());
+
+			ASSERT_TRUE(db->Merge().ok());
+			EXPECT_TRUE(std::filesystem::exists(MergeDir()));
+		}
+
+		auto dbOr = DB::Open(MakeOptions(160, /*syncOnWrite=*/true));
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		EXPECT_FALSE(std::filesystem::exists(MergeDir()));
+		EXPECT_TRUE(std::filesystem::exists(dir / std::string(HintFileName)));
+
+		for (int i = 0; i < 12; ++i)
+		{
+			SCOPED_TRACE(testing::Message() << "i=" << i);
+			auto valOr = db->Get("key-" + std::to_string(i));
+			ASSERT_TRUE(valOr.ok()) << valOr.status();
+			EXPECT_EQ(*valOr, "new-" + std::to_string(i));
+		}
+
+		auto deleted = db->Get("deleted");
+		EXPECT_FALSE(deleted.ok());
+		EXPECT_EQ(deleted.status().code(), absl::StatusCode::kNotFound);
+
+		auto survivor = db->Get("survivor");
+		ASSERT_TRUE(survivor.ok()) << survivor.status();
+		EXPECT_EQ(*survivor, "live");
+
+		ASSERT_TRUE(db->Put("post-reopen", "ok").ok());
+		auto postReopen = db->Get("post-reopen");
+		ASSERT_TRUE(postReopen.ok()) << postReopen.status();
+		EXPECT_EQ(*postReopen, "ok");
+	}
+
+	TEST_F(DBTest, MergeWithOnlyDeletedKeysReopensEmpty)
+	{
+		{
+			auto dbOr = DB::Open(MakeOptions(128, /*syncOnWrite=*/true));
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+
+			ASSERT_TRUE(db->Put("deleted", "value").ok());
+			ASSERT_TRUE(db->Delete("deleted").ok());
+			ASSERT_TRUE(db->Merge().ok());
+			EXPECT_TRUE(std::filesystem::exists(MergeDir()));
+		}
+
+		auto dbOr = DB::Open(MakeOptions(128, /*syncOnWrite=*/true));
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		EXPECT_FALSE(std::filesystem::exists(MergeDir()));
+		auto deleted = db->Get("deleted");
+		EXPECT_FALSE(deleted.ok());
+		EXPECT_EQ(deleted.status().code(), absl::StatusCode::kNotFound);
+
+		ASSERT_TRUE(db->Put("fresh", "value").ok());
+		auto fresh = db->Get("fresh");
+		ASSERT_TRUE(fresh.ok()) << fresh.status();
+		EXPECT_EQ(*fresh, "value");
+	}
+
+	TEST_F(DBTest, MergeLargeDataSetPreservesLatestValuesAcrossReopen)
+	{
+		constexpr int kCount = 2500;
+		constexpr int kDeletedModulo = 5;
+		auto makeKey = [](int i) {
+			return "large-key-" + std::to_string(i);
+		};
+		auto makeValue = [](int i, int generation) {
+			return "large-value-" + std::to_string(generation) + "-" + std::to_string(i) + "-" +
+				   std::string(64, static_cast<char>('a' + (i % 26)));
+		};
+
+		{
+			auto dbOr = DB::Open(MakeOptions(4096, /*syncOnWrite=*/false));
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+
+			for (int i = 0; i < kCount; ++i)
+			{
+				ASSERT_TRUE(db->Put(makeKey(i), makeValue(i, 0)).ok());
+			}
+			for (int i = 0; i < kCount; ++i)
+			{
+				ASSERT_TRUE(db->Put(makeKey(i), makeValue(i, 1)).ok());
+			}
+			for (int i = 0; i < kCount; ++i)
+			{
+				if (i % kDeletedModulo == 0)
+				{
+					ASSERT_TRUE(db->Delete(makeKey(i)).ok());
+				}
+				else
+				{
+					ASSERT_TRUE(db->Put(makeKey(i), makeValue(i, 2)).ok());
+				}
+			}
+
+			ASSERT_TRUE(db->Merge().ok());
+			ASSERT_TRUE(db->Put("post-large-merge", "still-here").ok());
+
+			for (int i = 0; i < kCount; ++i)
+			{
+				SCOPED_TRACE(testing::Message() << "current instance i=" << i);
+				auto valOr = db->Get(makeKey(i));
+				if (i % kDeletedModulo == 0)
+				{
+					EXPECT_FALSE(valOr.ok());
+					EXPECT_EQ(valOr.status().code(), absl::StatusCode::kNotFound);
+				}
+				else
+				{
+					ASSERT_TRUE(valOr.ok()) << valOr.status();
+					EXPECT_EQ(*valOr, makeValue(i, 2));
+				}
+			}
+		}
+
+		auto dbOr = DB::Open(MakeOptions(4096, /*syncOnWrite=*/false));
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		for (int i = 0; i < kCount; ++i)
+		{
+			SCOPED_TRACE(testing::Message() << "reopened i=" << i);
+			auto valOr = db->Get(makeKey(i));
+			if (i % kDeletedModulo == 0)
+			{
+				EXPECT_FALSE(valOr.ok());
+				EXPECT_EQ(valOr.status().code(), absl::StatusCode::kNotFound);
+			}
+			else
+			{
+				ASSERT_TRUE(valOr.ok()) << valOr.status();
+				EXPECT_EQ(*valOr, makeValue(i, 2));
+			}
+		}
+
+		auto postMerge = db->Get("post-large-merge");
+		ASSERT_TRUE(postMerge.ok()) << postMerge.status();
+		EXPECT_EQ(*postMerge, "still-here");
+		EXPECT_EQ(db->ListKeys().size(), static_cast<size_t>(kCount - (kCount / kDeletedModulo)) + 1);
 	}
 
 } // namespace
