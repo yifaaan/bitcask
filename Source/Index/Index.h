@@ -26,9 +26,9 @@ namespace bitcask
 	public:
 		virtual ~Index() = default;
 
-		virtual absl::Status Put(std::string_view key, const LogRecordPos& pos) = 0;
+		virtual std::optional<LogRecordPos> Put(std::string_view key, const LogRecordPos& pos) = 0;
 		virtual absl::StatusOr<LogRecordPos> Get(std::string_view key) const = 0;
-		virtual absl::Status Delete(std::string_view key) = 0;
+		virtual std::optional<LogRecordPos> Delete(std::string_view key) = 0;
 
 		virtual std::unique_ptr<IndexIterator> NewIterator() const = 0;
 

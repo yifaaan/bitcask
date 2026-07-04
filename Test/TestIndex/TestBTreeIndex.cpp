@@ -18,7 +18,7 @@ namespace
 		BTreeIndex index;
 		const LogRecordPos pos{.fid = 7, .offset = 123, .size = 45};
 
-		EXPECT_TRUE(index.Put("hello", pos).ok());
+		EXPECT_FALSE(index.Put("hello", pos).has_value());
 		EXPECT_EQ(index.Size(), 1u);
 
 		auto got = index.Get("hello");
@@ -27,7 +27,7 @@ namespace
 		EXPECT_EQ(got->offset, pos.offset);
 		EXPECT_EQ(got->size, pos.size);
 
-		EXPECT_TRUE(index.Delete("hello").ok());
+		EXPECT_TRUE(index.Delete("hello").has_value());
 		EXPECT_EQ(index.Size(), 0u);
 
 		auto missing = index.Get("hello");
@@ -39,8 +39,12 @@ namespace
 	{
 		BTreeIndex index;
 
-		EXPECT_TRUE(index.Put("same-key", LogRecordPos{.fid = 1, .offset = 10, .size = 20}).ok());
-		EXPECT_TRUE(index.Put("same-key", LogRecordPos{.fid = 2, .offset = 30, .size = 40}).ok());
+		EXPECT_FALSE(index.Put("same-key", LogRecordPos{.fid = 1, .offset = 10, .size = 20}).has_value());
+		auto oldPos = index.Put("same-key", LogRecordPos{.fid = 2, .offset = 30, .size = 40});
+		ASSERT_TRUE(oldPos.has_value());
+		EXPECT_EQ(oldPos->fid, 1);
+		EXPECT_EQ(oldPos->offset, 10);
+		EXPECT_EQ(oldPos->size, 20);
 
 		EXPECT_EQ(index.Size(), 1u);
 
@@ -55,8 +59,8 @@ namespace
 	{
 		BTreeIndex index;
 
-		EXPECT_TRUE(index.Put("a", LogRecordPos{.fid = 1, .offset = 1, .size = 1}).ok());
-		EXPECT_TRUE(index.Put("b", LogRecordPos{.fid = 2, .offset = 2, .size = 2}).ok());
+		EXPECT_FALSE(index.Put("a", LogRecordPos{.fid = 1, .offset = 1, .size = 1}).has_value());
+		EXPECT_FALSE(index.Put("b", LogRecordPos{.fid = 2, .offset = 2, .size = 2}).has_value());
 		EXPECT_EQ(index.Size(), 2u);
 
 		index.Clear();
@@ -66,13 +70,11 @@ namespace
 		EXPECT_FALSE(index.Get("b").ok());
 	}
 
-	TEST(BTreeIndex, DeleteMissingKeyReturnsNotFound)
+	TEST(BTreeIndex, DeleteMissingKeyReturnsNullopt)
 	{
 		BTreeIndex index;
 
-		auto status = index.Delete("missing");
-		EXPECT_FALSE(status.ok());
-		EXPECT_EQ(status.code(), absl::StatusCode::kNotFound);
+		EXPECT_FALSE(index.Delete("missing").has_value());
 	}
 
 	TEST(BTreeIndexIterator, EmptyIterator)
@@ -524,9 +526,9 @@ namespace
 	TEST(Iterator, IteratorFromBTreeIndex)
 	{
 		BTreeIndex index;
-		EXPECT_TRUE(index.Put("b", LogRecordPos{2, 20, 200}).ok());
-		EXPECT_TRUE(index.Put("a", LogRecordPos{1, 10, 100}).ok());
-		EXPECT_TRUE(index.Put("c", LogRecordPos{3, 30, 300}).ok());
+		EXPECT_FALSE(index.Put("b", LogRecordPos{2, 20, 200}).has_value());
+		EXPECT_FALSE(index.Put("a", LogRecordPos{1, 10, 100}).has_value());
+		EXPECT_FALSE(index.Put("c", LogRecordPos{3, 30, 300}).has_value());
 
 		auto it = index.NewIterator();
 		ASSERT_NE(it, nullptr);

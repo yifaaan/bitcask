@@ -4,6 +4,7 @@
 #include "DB/WriteBatch.h"
 #include "Index/Index.h"
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -26,6 +27,21 @@ namespace bitcask
 		// 是否在每次写入后进行同步
 		bool syncOnWrite = false;
 		IndexType indexType = IndexType::BTree;
+		// 可回收空间占比阈值 [0, 1]: 当 可回收字节 / 数据总大小 达到该比例时 Merge 才执行; 0 表示总是合并。
+		double mergeThreshold = 0.0;
+	};
+
+	// 数据库运行时统计信息
+	struct Stat
+	{
+		// 内存索引中的 key 数量
+		size_t keyCount = 0;
+		// 数据文件数量 (活跃文件 + 旧文件)
+		size_t dataFileCount = 0;
+		// 可被 Merge 回收的字节数 (Put 覆盖 / Delete 产生的旧记录)
+		int64_t reclaimableSize = 0;
+		// 数据文件占用的总大小 (各数据文件已写入字节数 writeOffset 之和, 逻辑大小)
+		int64_t diskSize = 0;
 	};
 
 	class DB
@@ -53,6 +69,14 @@ namespace bitcask
 		absl::Status Close();
 
 		absl::Status Merge();
+
+		// 返回数据库运行时统计信息 (key 数量、数据文件数量、可回收字节、磁盘占用)
+		absl::StatusOr<Stat> GetStat() const;
+
+		// 当前可被 Merge 回收的字节数: 每次 Put 覆盖 / Delete 旧 key 时累加旧记录大小, 启动时由数据文件回放重建。
+		// 仅为粗略的统计计数, 读取用 relaxed 内存序。
+		int64_t ReclaimSize() const noexcept { return reclaimSize.load(std::memory_order_relaxed); }
+
 	private:
 		friend class WriteBatch;
 		explicit DB(Options options);
@@ -101,6 +125,8 @@ namespace bitcask
 		std::atomic_uint64_t currentSeqNum = 0;
 		// 是否正在进行 Merge 操作
 		std::atomic_bool merging = false;
+		// 合并过程中需要回收的空间大小
+		std::atomic<int64_t> reclaimSize{0};
 	};
 
 } // namespace bitcask

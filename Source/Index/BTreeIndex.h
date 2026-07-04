@@ -16,9 +16,9 @@ namespace bitcask
 		BTreeIndex() = default;
 		~BTreeIndex() override = default;
 
-		absl::Status Put(std::string_view key, const LogRecordPos& pos) override;
+		std::optional<LogRecordPos> Put(std::string_view key, const LogRecordPos& pos) override;
 		absl::StatusOr<LogRecordPos> Get(std::string_view key) const override;
-		absl::Status Delete(std::string_view key) override;
+		std::optional<LogRecordPos> Delete(std::string_view key) override;
 
 		size_t Size() const override;
 		void Clear() override;

@@ -3,6 +3,8 @@
 #include "DB/DB.h"
 #include "Data/Varint.h"
 
+#include <atomic>
+
 namespace bitcask
 {
 	WriteBatch::WriteBatch(DB* db, WriteBatchOptions options)
@@ -84,16 +86,16 @@ namespace bitcask
 			auto pos = positions[std::string(key)];
 			if (record.type == LogRecordType::Deleted)
 			{
-				if (auto status = db->index->Delete(key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+				if (auto oldPos = db->index->Delete(key); oldPos.has_value())
 				{
-					return status;
+					db->reclaimSize.fetch_add(oldPos->size, std::memory_order_relaxed);
 				}
 			}
 			else if (record.type == LogRecordType::Normal)
 			{
-				if (auto status = db->index->Put(key, pos); !status.ok())
+				if (auto oldPos = db->index->Put(key, pos); oldPos.has_value())
 				{
-					return status;
+					db->reclaimSize.fetch_add(oldPos->size, std::memory_order_relaxed);
 				}
 			}
 		}

@@ -3,6 +3,7 @@
 #include "DB/WriteBatch.h"
 
 #include <algorithm>
+#include <atomic>
 #include <charconv>
 #include <filesystem>
 #include <mutex>
@@ -19,21 +20,21 @@ namespace
 		return {seqNum, std::string(key.substr(nextIdx))};
 	}
 
-	absl::Status LoadIndexFromOneFile(bitcask::Index* index, const bitcask::DataFile& file, uint32_t fid, std::unordered_map<uint64_t, std::vector<bitcask::TransactionLogRecord>>& txnRecords, uint64_t& maxSeqNum, int64_t* writeOffset = nullptr)
+	absl::Status LoadIndexFromOneFile(bitcask::Index* index, const bitcask::DataFile& file, uint32_t fid, std::unordered_map<uint64_t, std::vector<bitcask::TransactionLogRecord>>& txnRecords, uint64_t& maxSeqNum, int64_t& reclaimSize, int64_t* writeOffset = nullptr)
 	{
 		auto updateIndex = [&](std::string_view key, bitcask::LogRecordPos pos, bitcask::LogRecordType type) -> absl::Status {
 			if (type == bitcask::LogRecordType::Deleted)
 			{
-				if (auto status = index->Delete(key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+				if (auto oldPos = index->Delete(key); oldPos.has_value())
 				{
-					return status;
+					reclaimSize += oldPos->size;
 				}
 			}
 			else
 			{
-				if (auto status = index->Put(key, pos); !status.ok())
+				if (auto oldPos = index->Put(key, pos); oldPos.has_value())
 				{
-					return status;
+					reclaimSize += oldPos->size;
 				}
 			}
 			return absl::OkStatus();
@@ -254,6 +255,8 @@ namespace bitcask
 		std::unordered_map<uint64_t, std::vector<TransactionLogRecord>> txnRecords;
 		// 扫描过程中更新最大事务序列号
 		uint64_t maxSeqNum = 0;
+		// 回放过程中累加可回收空间(覆盖/删除产生的旧记录), 末尾一次性写入成员
+		int64_t reclaimable = 0;
 		// 遍历所有数据文件，加载索引到内存
 		for (const auto& [fid, file] : olderFiles)
 		{
@@ -262,7 +265,7 @@ namespace bitcask
 				// 已合并的文件的索引已经通过hint文件加载到内存了, 跳过
 				continue;
 			}
-			if (auto status = LoadIndexFromOneFile(index.get(), *file, fid, txnRecords, maxSeqNum); !status.ok())
+			if (auto status = LoadIndexFromOneFile(index.get(), *file, fid, txnRecords, maxSeqNum, reclaimable); !status.ok())
 			{
 				return status;
 			}
@@ -271,7 +274,7 @@ namespace bitcask
 		// Load active file
 		if (activeFile)
 		{
-			if (auto status = LoadIndexFromOneFile(index.get(), *activeFile, activeFile->fid, txnRecords, maxSeqNum, &activeFile->writeOffset); !status.ok())
+			if (auto status = LoadIndexFromOneFile(index.get(), *activeFile, activeFile->fid, txnRecords, maxSeqNum, reclaimable, &activeFile->writeOffset); !status.ok())
 			{
 				return status;
 			}
@@ -279,6 +282,8 @@ namespace bitcask
 
 		// 更新DB的当前事务序列号
 		currentSeqNum = maxSeqNum;
+		// 回放重建可回收空间统计
+		reclaimSize = reclaimable;
 
 		return absl::OkStatus();
 	}
@@ -311,9 +316,9 @@ namespace bitcask
 		}
 
 		// Update the index
-		if (auto status = index->Put(key, *posOr); !status.ok())
+		if (auto oldPos = index->Put(key, *posOr); oldPos.has_value())
 		{
-			return status;
+			reclaimSize.fetch_add(oldPos->size, std::memory_order_relaxed);
 		}
 
 		return absl::OkStatus();
@@ -498,6 +503,32 @@ namespace bitcask
 		return absl::OkStatus();
 	}
 
+	absl::StatusOr<Stat> DB::GetStat() const
+	{
+		Stat stat;
+		stat.reclaimableSize = reclaimSize.load(std::memory_order_relaxed);
+		std::shared_lock lock(mutex);
+		if (closed)
+		{
+			return absl::FailedPreconditionError("db is closed");
+		}
+		stat.keyCount = index->Size();
+		stat.dataFileCount = olderFiles.size() + (activeFile ? 1 : 0);
+		// 磁盘占用 = 各数据文件已写入字节数 (writeOffset) 之和, 反映 DB 当前持有的数据量。
+		// 用逻辑大小而非遍历文件系统, 避免 stdio 缓冲导致未 flush 的写入被漏算。
+		int64_t total = 0;
+		if (activeFile)
+		{
+			total += activeFile->writeOffset;
+		}
+		for (const auto& [fid, file] : olderFiles)
+		{
+			total += file->writeOffset;
+		}
+		stat.diskSize = total;
+		return stat;
+	}
+
 	absl::Status DB::Delete(std::string_view key)
 	{
 		{
@@ -527,9 +558,9 @@ namespace bitcask
 		{
 			return posOr.status();
 		}
-		if (auto status = index->Delete(key); !status.ok() && status.code() != absl::StatusCode::kNotFound)
+		if (auto oldPos = index->Delete(key); oldPos.has_value())
 		{
-			return status;
+			reclaimSize.fetch_add(oldPos->size, std::memory_order_relaxed);
 		}
 		return absl::OkStatus();
 	}
@@ -585,6 +616,7 @@ namespace bitcask
 	{
 		std::vector<DataFile*> filesToMerge;
 		uint32_t unMergedFid = 0;
+		int64_t reclaimAtStart = 0; // 合并开始时可回收字节数; 合并成功后据此扣减 (并发期间新增的不扣)
 		{
 			std::unique_lock lock(mutex);
 			if (closed)
@@ -598,6 +630,38 @@ namespace bitcask
 			if (merging.exchange(true))
 			{
 				return absl::FailedPreconditionError("merge is already in progress");
+			}
+
+			// 前置检查 1: 可回收空间是否达到阈值 (可回收字节 / 数据总大小)
+			int64_t totalDiskSize = activeFile->writeOffset;
+			for (const auto& [fid, file] : olderFiles)
+			{
+				totalDiskSize += file->writeOffset;
+			}
+			int64_t reclaimable = reclaimSize.load(std::memory_order_relaxed);
+			reclaimAtStart = reclaimable; // 快照: 这部分垃圾由本次合并回收, 末尾从 reclaimSize 扣减
+			if (options.mergeThreshold > 0.0 &&
+				static_cast<double>(reclaimable) < static_cast<double>(totalDiskSize) * options.mergeThreshold)
+			{
+				merging = false;
+				return absl::OkStatus(); // 未达阈值, 无需合并
+			}
+
+			// 前置检查 2: 磁盘剩余空间能否容纳合并后的副本 (大小 ≈ 数据总大小 - 可回收字节)
+			int64_t liveSize = totalDiskSize - reclaimable;
+			std::error_code spaceEc;
+			auto spaceInfo = std::filesystem::space(options.dataDir, spaceEc);
+			if (spaceEc)
+			{
+				merging = false;
+				return absl::InternalError("failed to query disk space for merge: " + spaceEc.message());
+			}
+			if (liveSize > static_cast<int64_t>(spaceInfo.available))
+			{
+				merging = false;
+				return absl::ResourceExhaustedError(
+					"insufficient disk space for merge: need " + std::to_string(liveSize) +
+					" bytes, available " + std::to_string(spaceInfo.available));
 			}
 
 			// 创建新的活跃文件用于写入
@@ -737,6 +801,8 @@ namespace bitcask
 			merging = false;
 			return status;
 		}
+		// 合并成功: 扣减本次合并开始时已存在的可回收字节 (并发期间新增的仍计入, 不扣)
+		reclaimSize.fetch_sub(reclaimAtStart, std::memory_order_relaxed);
 		merging = false;
 		return absl::OkStatus();
 	}
@@ -965,10 +1031,8 @@ namespace bitcask
 				return recordOr.status();
 			}
 			auto& [size, record] = *recordOr;
-			if (auto status = index->Put(record.key, record.pos); !status.ok())
-			{
-				return status;
-			}
+			// hint 文件只含 Merge 后的存活记录, 加载时每个 key 首次插入(无旧值), 不累加 reclaimSize
+			(void)index->Put(record.key, record.pos);
 			offset += size;
 		}
 		return absl::OkStatus();

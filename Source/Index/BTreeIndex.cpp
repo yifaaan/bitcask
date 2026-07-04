@@ -1,13 +1,21 @@
 ﻿#include "BTreeIndex.h"
 
+#include "Data/LogRecord.h"
+
 namespace bitcask
 {
 
-	absl::Status BTreeIndex::Put(std::string_view key, const LogRecordPos& pos)
+	std::optional<LogRecordPos> BTreeIndex::Put(std::string_view key, const LogRecordPos& pos)
 	{
 		std::unique_lock lock(mutex);
+		auto it = btree.find(std::string(key));
+		if (it != btree.end())
+		{
+			auto old = std::exchange(it->second, pos);
+			return old;
+		}
 		btree[std::string(key)] = pos;
-		return absl::OkStatus();
+		return std::nullopt;
 	}
 
 	absl::StatusOr<LogRecordPos> BTreeIndex::Get(std::string_view key) const
@@ -21,15 +29,17 @@ namespace bitcask
 		return it->second;
 	}
 
-	absl::Status BTreeIndex::Delete(std::string_view key)
+	std::optional<LogRecordPos> BTreeIndex::Delete(std::string_view key)
 	{
 		std::unique_lock lock(mutex);
-		auto erased = btree.erase(std::string(key));
-		if (erased == 0)
+		auto it = btree.find(std::string(key));
+		if (it == btree.end())
 		{
-			return absl::NotFoundError("key not found");
+			return std::nullopt;
 		}
-		return absl::OkStatus();
+		auto old = it->second;
+		btree.erase(it);
+		return old;
 	}
 
 	size_t BTreeIndex::Size() const

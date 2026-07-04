@@ -205,6 +205,135 @@ namespace
 		EXPECT_TRUE(db->Delete("nope").ok());
 	}
 
+	TEST_F(DBTest, ReclaimSizeAccountsForOverwritesAndDeletes)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k", "v1").ok()); // 首次写入, 无旧记录
+		EXPECT_EQ(db->ReclaimSize(), 0);
+
+		ASSERT_TRUE(db->Put("k", "v2").ok()); // 覆盖, 旧记录 v1 变为可回收
+		EXPECT_GT(db->ReclaimSize(), 0);
+		auto afterOverwrite = db->ReclaimSize();
+
+		ASSERT_TRUE(db->Delete("k").ok()); // 删除, 旧记录 v2 也变为可回收
+		EXPECT_GT(db->ReclaimSize(), afterOverwrite);
+	}
+
+	TEST_F(DBTest, ReclaimSizeRestoredOnReopen)
+	{
+		int64_t before = 0;
+		{
+			auto dbOr = DB::Open(MakeOptions(10 * 1024 * 1024, /*syncOnWrite=*/true));
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+
+			ASSERT_TRUE(db->Put("k", "v1").ok());
+			ASSERT_TRUE(db->Put("k", "v2").ok());
+			ASSERT_TRUE(db->Delete("k").ok());
+			before = db->ReclaimSize();
+			ASSERT_GT(before, 0);
+		}
+
+		auto dbOr = DB::Open(MakeOptions(10 * 1024 * 1024, /*syncOnWrite=*/true));
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		// 启动回放应重建出与关闭前一致的可回收空间
+		EXPECT_EQ(db->ReclaimSize(), before);
+	}
+
+	TEST_F(DBTest, GetStatReportsCountsSizesAndReclaimable)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k1", "v1").ok());
+		ASSERT_TRUE(db->Put("k2", "v2").ok());
+		ASSERT_TRUE(db->Put("k1", "v2").ok()); // 覆盖 k1, 产生可回收空间
+
+		auto statOr = db->GetStat();
+		ASSERT_TRUE(statOr.ok()) << statOr.status();
+		EXPECT_EQ(statOr->keyCount, 2u);          // k1, k2
+		EXPECT_EQ(statOr->dataFileCount, 1u);     // 仅活跃文件
+		EXPECT_GT(statOr->reclaimableSize, 0);    // 覆盖产生垃圾
+		EXPECT_GT(statOr->diskSize, 0);           // 有数据落盘
+	}
+
+	TEST_F(DBTest, GetStatFailsWhenClosed)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+		ASSERT_TRUE(db->Close().ok());
+
+		auto statOr = db->GetStat();
+		EXPECT_FALSE(statOr.ok());
+		EXPECT_EQ(statOr.status().code(), absl::StatusCode::kFailedPrecondition);
+	}
+
+	TEST_F(DBTest, MergeSkipsWhenReclaimableBelowThreshold)
+	{
+		auto opts = MakeOptions();
+		opts.mergeThreshold = 0.9; // 要求 90% 可回收
+		auto dbOr = DB::Open(opts);
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k", "v").ok()); // 纯存活数据, 可回收为 0
+		ASSERT_TRUE(db->Merge().ok());       // 未达阈值 -> 无操作
+		EXPECT_FALSE(std::filesystem::exists(MergeDir()));
+	}
+
+	TEST_F(DBTest, MergeProceedsWhenReclaimableAboveThreshold)
+	{
+		auto opts = MakeOptions();
+		opts.mergeThreshold = 0.1; // 要求 10% 可回收
+		auto dbOr = DB::Open(opts);
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k", std::string(100, 'x')).ok());
+		ASSERT_TRUE(db->Put("k", std::string(100, 'y')).ok()); // 覆盖产生可回收空间
+		ASSERT_TRUE(db->Merge().ok());
+		EXPECT_TRUE(std::filesystem::exists(MergeDir()));
+	}
+
+	TEST_F(DBTest, MergeClearsReclaimableSize)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k", "v1").ok());
+		ASSERT_TRUE(db->Put("k", "v2").ok()); // 覆盖 -> 产生可回收空间
+		EXPECT_GT(db->ReclaimSize(), 0);
+
+		ASSERT_TRUE(db->Merge().ok());
+		// 合并已回收这部分垃圾, reclaimSize 应清零
+		EXPECT_EQ(db->ReclaimSize(), 0);
+	}
+
+	TEST_F(DBTest, ReclaimSizeAccumulatesAgainAfterMerge)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k", "v1").ok());
+		ASSERT_TRUE(db->Put("k", "v2").ok());
+		ASSERT_TRUE(db->Merge().ok());
+		EXPECT_EQ(db->ReclaimSize(), 0);
+
+		// 合并后新的覆盖应重新累加 (未被错误清零影响)
+		ASSERT_TRUE(db->Put("k2", "a").ok());
+		ASSERT_TRUE(db->Put("k2", "b").ok());
+		EXPECT_GT(db->ReclaimSize(), 0);
+	}
+
 	TEST_F(DBTest, PutPersistsAcrossReopen)
 	{
 		{
