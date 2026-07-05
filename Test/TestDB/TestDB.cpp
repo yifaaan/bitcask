@@ -691,5 +691,79 @@ namespace
 		EXPECT_EQ(db->ListKeys().size(), static_cast<size_t>(kCount - (kCount / kDeletedModulo)) + 1);
 	}
 
+	// === 文件锁测试 ===
+	// 文件锁保证同一数据目录同一时刻只能被一个 DB 实例持有。
+
+	TEST_F(DBTest, OpenCreatesLockFile)
+	{
+		{
+			auto dbOr = DB::Open(MakeOptions());
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+			EXPECT_TRUE(std::filesystem::exists(dir / FileLockName));
+		}
+		// db 析构释放锁, 锁文件仍保留在磁盘上
+		EXPECT_TRUE(std::filesystem::exists(dir / FileLockName));
+	}
+
+	TEST_F(DBTest, SecondOpenOnSameDirectoryFails)
+	{
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		// 持有锁期间, 同目录二次 Open 必须失败
+		auto secondOr = DB::Open(MakeOptions());
+		EXPECT_FALSE(secondOr.ok());
+		EXPECT_EQ(secondOr.status().code(), absl::StatusCode::kFailedPrecondition)
+			<< secondOr.status();
+	}
+
+	TEST_F(DBTest, CanReopenAfterClose)
+	{
+		{
+			auto dbOr = DB::Open(MakeOptions());
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+			ASSERT_TRUE(db->Put("k", "v").ok());
+			ASSERT_TRUE(db->Close().ok());
+		}
+
+		// Close 释放锁后, 同目录可被新实例重新打开
+		auto dbOr = DB::Open(MakeOptions());
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+		auto valOr = db->Get("k");
+		ASSERT_TRUE(valOr.ok()) << valOr.status();
+		EXPECT_EQ(*valOr, "v");
+	}
+
+	TEST_F(DBTest, DifferentDirectoriesDoNotConflict)
+	{
+		auto dir2 = dir.parent_path() / (dir.filename().string() + "-second");
+		std::error_code ec;
+		std::filesystem::remove_all(dir2, ec);
+
+		auto db1Or = DB::Open(MakeOptions());
+		ASSERT_TRUE(db1Or.ok()) << db1Or.status();
+		auto db1 = std::move(*db1Or);
+
+		Options opt2;
+		opt2.dataDir = dir2.string();
+		opt2.maxDataFileSize = 10 * 1024 * 1024;
+		opt2.indexType = IndexType::BTree;
+		auto db2Or = DB::Open(opt2);
+		ASSERT_TRUE(db2Or.ok()) << db2Or.status();
+		auto db2 = std::move(*db2Or);
+
+		// 两个不同目录的实例应能并存且互不干扰
+		ASSERT_TRUE(db1->Put("k", "from-db1").ok());
+		ASSERT_TRUE(db2->Put("k", "from-db2").ok());
+		EXPECT_EQ(*db1->Get("k"), "from-db1");
+		EXPECT_EQ(*db2->Get("k"), "from-db2");
+
+		std::filesystem::remove_all(dir2, ec);
+	}
+
 } // namespace
 } // namespace bitcask
