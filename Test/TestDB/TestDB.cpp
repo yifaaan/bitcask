@@ -765,5 +765,102 @@ namespace
 		std::filesystem::remove_all(dir2, ec);
 	}
 
+	// === bytesPerSync 测试 ===
+	// bytesPerSync: 累计写入达到阈值后自动 Sync; 0 表示关闭。syncOnWrite 优先级更高。
+	// 通过 Stat.bytesWrite (距上次 Sync 的累计未同步字节) 观察自动 sync 是否触发:
+	//   - 关闭 / 已 sync: bytesWrite == 0
+	//   - 累计未达阈值:   bytesWrite > 0
+
+	TEST_F(DBTest, BytesPerSyncDisabledByDefault)
+	{
+		auto opt = MakeOptions();
+		// opt.bytesPerSync 默认 0 = 关闭
+		auto dbOr = DB::Open(opt);
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k1", "v1").ok());
+		ASSERT_TRUE(db->Put("k2", "v2").ok());
+
+		auto statOr = db->GetStat();
+		ASSERT_TRUE(statOr.ok()) << statOr.status();
+		// 关闭时不在写入路径累计, bytesWrite 恒为 0
+		EXPECT_EQ(statOr->bytesWrite, 0);
+	}
+
+	TEST_F(DBTest, BytesPerSyncAccumulatesUnderThreshold)
+	{
+		auto opt = MakeOptions();
+		opt.bytesPerSync = 1ull * 1024 * 1024 * 1024; // 1 GiB, 远超本次写入量
+		auto dbOr = DB::Open(opt);
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k1", "v1").ok());
+		ASSERT_TRUE(db->Put("k2", "v2").ok());
+		ASSERT_TRUE(db->Put("k3", "v3").ok());
+
+		auto statOr = db->GetStat();
+		ASSERT_TRUE(statOr.ok()) << statOr.status();
+		// 累计未达阈值, 不会自动 sync, bytesWrite 应大于 0
+		EXPECT_GT(statOr->bytesWrite, 0);
+	}
+
+	TEST_F(DBTest, BytesPerSyncAutoSyncsAtThreshold)
+	{
+		auto opt = MakeOptions();
+		opt.bytesPerSync = 1; // 每条记录(>1 字节)都应触发自动 sync 并清零
+		auto dbOr = DB::Open(opt);
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k1", "v1").ok());
+		ASSERT_TRUE(db->Put("k2", "v2").ok());
+		ASSERT_TRUE(db->Put("k3", "v3").ok());
+
+		auto statOr = db->GetStat();
+		ASSERT_TRUE(statOr.ok()) << statOr.status();
+		// syncOnWrite=false, 仅 bytesPerSync 路径生效; 阈值=1 → 每次写后立即 sync+清零
+		EXPECT_EQ(statOr->bytesWrite, 0);
+	}
+
+	TEST_F(DBTest, ManualSyncResetsBytesWrite)
+	{
+		auto opt = MakeOptions();
+		opt.bytesPerSync = 1ull * 1024 * 1024 * 1024; // 不触发自动 sync
+		auto dbOr = DB::Open(opt);
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k1", "v1").ok());
+		ASSERT_TRUE(db->Put("k2", "v2").ok());
+		ASSERT_TRUE(db->GetStat().value().bytesWrite > 0); // 累计中
+
+		ASSERT_TRUE(db->Sync().ok());
+
+		auto statOr = db->GetStat();
+		ASSERT_TRUE(statOr.ok()) << statOr.status();
+		// 手动 Sync 落盘后 bytesWrite 清零
+		EXPECT_EQ(statOr->bytesWrite, 0);
+	}
+
+	TEST_F(DBTest, SyncOnWriteTakesPrecedenceOverBytesPerSync)
+	{
+		auto opt = MakeOptions();
+		opt.syncOnWrite = true;
+		opt.bytesPerSync = 1ull * 1024 * 1024 * 1024; // 即使阈值很大, syncOnWrite 仍每次写都同步
+		auto dbOr = DB::Open(opt);
+		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+		auto db = std::move(*dbOr);
+
+		ASSERT_TRUE(db->Put("k1", "v1").ok());
+		ASSERT_TRUE(db->Put("k2", "v2").ok());
+
+		auto statOr = db->GetStat();
+		ASSERT_TRUE(statOr.ok()) << statOr.status();
+		// syncOnWrite 路径每次写后 sync+清零, bytesPerSync 路径不再累计
+		EXPECT_EQ(statOr->bytesWrite, 0);
+	}
+
 } // namespace
 } // namespace bitcask

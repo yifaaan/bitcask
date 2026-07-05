@@ -36,6 +36,9 @@ namespace bitcask
 		uint64_t maxDataFileSize = 10 * 1024 * 1024;
 		// 是否在每次写入后进行同步
 		bool syncOnWrite = false;
+		// 累计写入多少字节后自动对活跃数据文件进行 Sync; 0 表示关闭该机制。
+		// 仅在 syncOnWrite == false 时生效; syncOnWrite 优先级更高 (每次写都同步)。
+		uint64_t bytesPerSync = 0;
 		IndexType indexType = IndexType::BTree;
 		// 可回收空间占比阈值 [0, 1]: 当 可回收字节 / 数据总大小 达到该比例时 Merge 才执行; 0 表示总是合并。
 		double mergeThreshold = 0.0;
@@ -52,6 +55,8 @@ namespace bitcask
 		int64_t reclaimableSize = 0;
 		// 数据文件占用的总大小 (各数据文件已写入字节数 writeOffset 之和, 逻辑大小)
 		int64_t diskSize = 0;
+		// 距离上次 Sync 累计的未同步字节数 (bytesPerSync 自动 sync / 手动 Sync / 旋转 sync 均会清零)
+		int64_t bytesWrite = 0;
 	};
 
 	class DB
@@ -140,6 +145,8 @@ namespace bitcask
 		std::atomic_bool merging = false;
 		// 合并过程中需要回收的空间大小
 		std::atomic<int64_t> reclaimSize{0};
+		// 距离上次 Sync 累计的未同步字节数; 由 bytesPerSync 阈值消费, 仅在写入路径变更
+		std::atomic<int64_t> bytesWrite{0};
 		// 文件锁，确保同一数据目录只能被一个进程使用
 		std::unique_ptr<boost::interprocess::file_lock> flock;
 	};

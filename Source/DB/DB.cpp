@@ -400,6 +400,8 @@ namespace bitcask
 			{
 				return status;
 			}
+			// 旋转前已 Sync 落盘, 累计的未同步字节清零
+			bytesWrite.store(0, std::memory_order_relaxed);
 			olderFiles[activeFile->fid] = std::move(activeFile);
 			if (auto status = SetActiveFile(); !status.ok())
 			{
@@ -418,6 +420,21 @@ namespace bitcask
 			if (!status.ok())
 			{
 				return status;
+			}
+			bytesWrite.store(0, std::memory_order_relaxed);
+		}
+		else if (options.bytesPerSync > 0)
+		{
+			// 累计本次写入字节, 达到 bytesPerSync 阈值则自动 Sync 并清零
+			auto cur = bytesWrite.fetch_add(int64_t(len), std::memory_order_relaxed) + int64_t(len);
+			if (uint64_t(cur) >= options.bytesPerSync)
+			{
+				auto status = activeFile->Sync();
+				if (!status.ok())
+				{
+					return status;
+				}
+				bytesWrite.store(0, std::memory_order_relaxed);
 			}
 		}
 		// 构造内存索引
@@ -569,6 +586,7 @@ namespace bitcask
 			total += file->writeOffset;
 		}
 		stat.diskSize = total;
+		stat.bytesWrite = bytesWrite.load(std::memory_order_relaxed);
 		return stat;
 	}
 
@@ -624,7 +642,13 @@ namespace bitcask
 		{
 			return absl::OkStatus();
 		}
-		return activeFile->Sync();
+		auto status = activeFile->Sync();
+		if (status.ok())
+		{
+			// 手动 Sync 落盘后, 累计的未同步字节清零
+			bytesWrite.store(0, std::memory_order_relaxed);
+		}
+		return status;
 	}
 
 	absl::Status DB::Close()
@@ -716,6 +740,8 @@ namespace bitcask
 				merging = false;
 				return status;
 			}
+			// 旋转前已 Sync 落盘, 累计的未同步字节清零
+			bytesWrite.store(0, std::memory_order_relaxed);
 			olderFiles[activeFile->fid] = std::move(activeFile);
 			if (auto status = SetActiveFile(); !status.ok())
 			{
