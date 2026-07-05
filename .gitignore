@@ -9,8 +9,7 @@ CMakeUserPresets.json
 *.sln
 *.vcxproj*
 .vscode/*
-!.vscode/
-!.vscode/settings.json
+
 # vcpkg
 vcpkg/
 vcpkg_installed/

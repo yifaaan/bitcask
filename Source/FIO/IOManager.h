@@ -1,14 +1,11 @@
 #pragma once
 
-#include "Data/LogRecord.h"
-
 #include <absl/status/status.h>
 #include <absl/status/statusor.h>
 
 #include <cstdint>
 #include <memory>
 #include <span>
-#include <string>
 #include <string_view>
 
 namespace bitcask

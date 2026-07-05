@@ -1,9 +1,20 @@
 #include "DB/WriteBatch.h"
 
 #include "DB/DB.h"
+#include "Data/LogRecord.h"
 #include "Data/Varint.h"
 
+#include <absl/status/status.h>
+
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace bitcask
 {

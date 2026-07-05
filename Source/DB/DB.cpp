@@ -1,14 +1,34 @@
 #include "DB.h"
 
 #include "DB/WriteBatch.h"
+#include "Data/DataFile.h"
+#include "Data/LogRecord.h"
+#include "Data/Varint.h"
+#include "FIO/IOManager.h"
+#include "Index/Index.h"
+
+#include <absl/status/status.h>
+#include <absl/status/statusor.h>
+#include <boost/interprocess/sync/file_lock.hpp>
 
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <mutex>
+#include <shared_mutex>
+#include <span>
+#include <string>
+#include <string_view>
 #include <system_error>
+#include <unordered_map>
 #include <utility>
+#include <vector>
+#include <fstream>
 
 namespace
 {
@@ -164,6 +184,30 @@ namespace bitcask
 		{
 			return absl::InternalError("failed to create data directory: " + ec.message());
 		}
+
+		// 判断当前目录是否可用
+		auto lockPath = std::filesystem::path(options.dataDir) / FileLockName;
+		{
+			std::ofstream ofs(lockPath, std::ios::app);
+			if (!ofs)
+			{
+				return absl::InternalError("failed to create lock file: " + lockPath.string());
+			}
+		}
+
+		try
+		{
+			flock = std::make_unique<boost::interprocess::file_lock>(lockPath.string().c_str());
+		}
+		catch (const std::exception& e)
+		{
+			return absl::InternalError(std::string("failed to acquire file lock: ") + e.what());
+		}
+		if (!flock->try_lock())
+		{
+			return absl::FailedPreconditionError("data directory is already in use by another process");
+		}
+
 		return absl::OkStatus();
 	}
 
@@ -249,7 +293,6 @@ namespace bitcask
 		{
 			return fidOr.status();
 		}
-
 
 		// 暂存事务数据
 		std::unordered_map<uint64_t, std::vector<TransactionLogRecord>> txnRecords;
@@ -608,6 +651,9 @@ namespace bitcask
 			}
 		}
 
+		flock->unlock();
+		flock.reset();
+
 		closed = true;
 		return result;
 	}
@@ -849,6 +895,11 @@ namespace bitcask
 			if (entry.path().filename() == MergeFinishedFileName)
 			{
 				mergeFinished = true;
+				continue;
+			}
+			// 跳过 merge 子库遗留的锁文件, 避免把它搬进数据目录(数据目录的锁文件由父库持有, 不能被 remove/rename)
+			if (entry.path().filename() == FileLockName)
+			{
 				continue;
 			}
 			mergeFiles.push_back(entry.path());

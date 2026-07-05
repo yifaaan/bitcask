@@ -1,11 +1,15 @@
 #pragma once
 
-#include "Data/DataFile.h"
 #include "DB/WriteBatch.h"
+#include "Data/DataFile.h"
+#include "Data/LogRecord.h"
 #include "Index/Index.h"
 
+
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <shared_mutex>
@@ -13,12 +17,18 @@
 
 #include <absl/status/status.h>
 #include <absl/status/statusor.h>
+#include <boost/interprocess/sync/file_lock.hpp>
+
+#include <string_view>
+#include <vector>
 
 namespace bitcask
 {
 
 	constexpr std::string_view MergeDirSuffix = "_merge";
 	constexpr std::string_view MergeFinishedKey = "merge_finished";
+	constexpr std::string_view FileLockName = "bitcask.lock";
+
 	struct Options
 	{
 		// 数据目录
@@ -57,7 +67,7 @@ namespace bitcask
 		absl::Status Delete(std::string_view key);
 
 		// 创建一个批量写事务;同一 DB 上的多个 WriteBatch 串行提交
-      	std::unique_ptr<WriteBatch> NewWriteBatch(const WriteBatchOptions& options = {});
+		std::unique_ptr<WriteBatch> NewWriteBatch(const WriteBatchOptions& options = {});
 
 		std::unique_ptr<Iterator> NewIterator(const IteratorOptions& options);
 		std::vector<std::string> ListKeys();
@@ -75,7 +85,10 @@ namespace bitcask
 
 		// 当前可被 Merge 回收的字节数: 每次 Put 覆盖 / Delete 旧 key 时累加旧记录大小, 启动时由数据文件回放重建。
 		// 仅为粗略的统计计数, 读取用 relaxed 内存序。
-		int64_t ReclaimSize() const noexcept { return reclaimSize.load(std::memory_order_relaxed); }
+		int64_t ReclaimSize() const noexcept
+		{
+			return reclaimSize.load(std::memory_order_relaxed);
+		}
 
 	private:
 		friend class WriteBatch;
@@ -89,7 +102,7 @@ namespace bitcask
 		// 需要加锁然后再调用
 		absl::StatusOr<LogRecordPos> AppendLogRecordWithLock(const LogRecord& record);
 		absl::StatusOr<LogRecordPos> AppendLogRecord(const LogRecord& record);
-		
+
 		// 设置当前活跃数据文件
 		// 需要加锁然后再调用
 		absl::Status SetActiveFile();
@@ -127,6 +140,8 @@ namespace bitcask
 		std::atomic_bool merging = false;
 		// 合并过程中需要回收的空间大小
 		std::atomic<int64_t> reclaimSize{0};
+		// 文件锁，确保同一数据目录只能被一个进程使用
+		std::unique_ptr<boost::interprocess::file_lock> flock;
 	};
 
 } // namespace bitcask

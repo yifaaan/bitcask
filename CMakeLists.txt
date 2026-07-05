@@ -13,7 +13,8 @@ endif()
 
 # === Dependencies ===
 find_package(absl CONFIG REQUIRED)
-
+find_package(mio CONFIG REQUIRED)
+find_package(Boost REQUIRED COMPONENTS interprocess)
 # === Bitcask Core Library ===
 add_library(bitcask_lib STATIC
     Source/Data/Varint.cpp
@@ -40,6 +41,8 @@ target_link_libraries(bitcask_lib PUBLIC
     absl::status
     absl::statusor
     absl::strings
+    mio::mio
+    Boost::interprocess
 )
 
 

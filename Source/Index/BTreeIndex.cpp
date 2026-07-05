@@ -1,6 +1,20 @@
 ﻿#include "BTreeIndex.h"
 
 #include "Data/LogRecord.h"
+#include "Index.h"
+
+#include <absl/status/status.h>
+#include <absl/status/statusor.h>
+
+#include <cstddef>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <shared_mutex>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 namespace bitcask
 {
@@ -54,7 +68,7 @@ namespace bitcask
 		btree.clear();
 	}
 
-	std::unique_ptr<Index> bitcask::NewIndex(IndexType type)
+	std::unique_ptr<Index> NewIndex(IndexType type)
 	{
 		switch (type)
 		{

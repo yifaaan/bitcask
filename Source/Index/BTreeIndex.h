@@ -1,10 +1,20 @@
 #pragma once
 
+#include "Data/LogRecord.h"
 #include "Index.h"
 
 #include <absl/container/btree_map.h>
+#include <absl/status/statusor.h>
 
+#include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <optional>
 #include <shared_mutex>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
 
 
 namespace bitcask

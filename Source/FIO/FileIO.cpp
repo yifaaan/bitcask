@@ -1,4 +1,13 @@
 #include "FileIO.h"
+#include <absl/status/status.h>
+#include <absl/status/statusor.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <memory>
+#include <span>
+#include <string>
+#include <string_view>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN

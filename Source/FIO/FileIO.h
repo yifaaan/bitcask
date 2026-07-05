@@ -2,6 +2,11 @@
 
 #include "IOManager.h"
 
+#include <absl/status/status.h>
+#include <absl/status/statusor.h>
+
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <span>
 #include <string>

@@ -1,10 +1,18 @@
 #include "LogRecord.h"
 
-#include <absl/crc/crc32c.h>
+#include "Varint.h"
 
+#include <absl/crc/crc32c.h>
+#include <absl/strings/string_view.h>
+
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <limits>
-#include <string_view>
+#include <optional>
+#include <span>
+#include <utility>
+#include <vector>
 
 namespace bitcask
 {

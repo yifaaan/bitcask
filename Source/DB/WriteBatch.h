@@ -3,7 +3,12 @@
 #include "Data/LogRecord.h"
 
 #include <absl/status/status.h>
+
+#include <cstdint>
 #include <mutex>
+#include <string>
+#include <string_view>
+#include <unordered_map>
 
 namespace bitcask
 {

@@ -1,5 +1,11 @@
 #include "Varint.h"
 
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <utility>
+
 namespace bitcask
 {
 
