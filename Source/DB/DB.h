@@ -120,6 +120,11 @@ namespace bitcask
 		// 从数据文件加载索引到内存
 		absl::Status LoadIndexFromDataFiles();
 
+		// 索引构建完成后，将所有数据文件从 MmapIO 切换为 FileIO，恢复可写能力
+		absl::Status SwitchDataFilesToStandardIO();
+		// 将单个 DataFile 重新以指定 IO 类型打开，保留 fid 与 writeOffset
+		absl::Status ReopenDataFileWithIOType(std::unique_ptr<DataFile>& file, IOType ioType);
+
 		std::string GetMergePath() const;
 
 		absl::Status LoadMergeFiles();

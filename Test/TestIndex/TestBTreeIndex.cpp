@@ -1,6 +1,8 @@
 #include "DB/DB.h"
 #include "Index/BTreeIndex.h"
 
+#include "../TestTempDir.h"
+
 #include <absl/status/status.h>
 #include <gtest/gtest.h>
 
@@ -479,9 +481,8 @@ namespace
 
 	TEST(Iterator, ValueFromDB)
 	{
-		std::error_code ec;
-		auto dir = std::filesystem::temp_directory_path() / "bitcask-iter-value-test";
-		std::filesystem::remove_all(dir, ec);
+		test::ScopedTempDir temp("iter-value-test");
+		auto dir = temp.path();
 
 		auto dbOr = DB::Open(Options{.dataDir = dir.string(), .indexType = IndexType::BTree});
 		ASSERT_TRUE(dbOr.ok()) << dbOr.status();
@@ -519,8 +520,6 @@ namespace
 
 		iter->Seek("z");
 		EXPECT_FALSE(iter->Valid());
-
-		std::filesystem::remove_all(dir, ec);
 	}
 
 	TEST(Iterator, IteratorFromBTreeIndex)

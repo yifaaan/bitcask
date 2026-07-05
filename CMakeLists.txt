@@ -23,6 +23,7 @@ add_library(bitcask_lib STATIC
     Source/DB/DB.cpp
     Source/FIO/IOManager.cpp
     Source/FIO/FileIO.cpp
+    Source/FIO/MmapIO.cpp
     Source/Index/BTreeIndex.cpp
     Source/DB/WriteBatch.cpp
  )

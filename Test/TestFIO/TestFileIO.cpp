@@ -1,5 +1,7 @@
 #include "FIO/FileIO.h"
 
+#include "../TestTempDir.h"
+
 #include <gtest/gtest.h>
 
 #include <filesystem>
@@ -9,18 +11,10 @@ namespace bitcask
 {
 namespace
 {
-	std::filesystem::path TempFilePath(const std::string& name)
-	{
-		auto dir = std::filesystem::temp_directory_path() / "bitcask-fileio-tests";
-		std::filesystem::create_directories(dir);
-		return dir / name;
-	}
-
 	TEST(FileIO, WriteReadSyncAndSize)
 	{
-		auto path = TempFilePath("write-read-sync.data");
-		std::error_code ec;
-		std::filesystem::remove(path, ec);
+		test::ScopedTempDir temp("fileio-test");
+		auto path = temp.path() / "write-read-sync.data";
 
 		auto fileOr = FileIO::Open(path.string());
 		ASSERT_TRUE(fileOr.ok()) << fileOr.status();
@@ -47,15 +41,12 @@ namespace
 
 		auto closeStatus = file->Close();
 		EXPECT_TRUE(closeStatus.ok()) << closeStatus;
-
-		std::filesystem::remove(path, ec);
 	}
 
 	TEST(FileIO, AppendWritesToEnd)
 	{
-		auto path = TempFilePath("append.data");
-		std::error_code ec;
-		std::filesystem::remove(path, ec);
+		test::ScopedTempDir temp("fileio-test");
+		auto path = temp.path() / "append.data";
 
 		auto fileOr = FileIO::Open(path.string());
 		ASSERT_TRUE(fileOr.ok()) << fileOr.status();
@@ -79,7 +70,6 @@ namespace
 		EXPECT_EQ(readBuf[2], std::byte{'z'});
 
 		ASSERT_TRUE(file->Close().ok());
-		std::filesystem::remove(path, ec);
 	}
 
 } // namespace

@@ -1,11 +1,13 @@
 #include "IOManager.h"
 
 #include "FileIO.h"
+#include "MmapIO.h"
 
 #include <absl/status/status.h>
 #include <absl/status/statusor.h>
 
 #include <memory>
+#include <string>
 #include <string_view>
 
 namespace bitcask
@@ -17,6 +19,8 @@ namespace bitcask
 		{
 		case IOType::Standard:
 			return FileIO::Open(filePath);
+		case IOType::MMap:
+			return MmapIO::Open(std::string(filePath));
 		}
 		return absl::InvalidArgumentError("unknown IOType");
 	}

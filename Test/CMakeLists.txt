@@ -6,6 +6,7 @@ add_executable(bitcask_tests
     TestIndex/TestBTreeIndex.cpp
     TestData/TestLogRecord.cpp
     TestFIO/TestFileIO.cpp
+    TestFIO/TestMmapIO.cpp
 )
 
 target_link_libraries(bitcask_tests PRIVATE

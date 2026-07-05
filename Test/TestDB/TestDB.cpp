@@ -1,9 +1,10 @@
 #include "DB/DB.h"
 
+#include "../TestTempDir.h"
+
 #include <absl/status/status.h>
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -22,16 +23,12 @@ namespace
 	protected:
 		static std::filesystem::path MakeUniqueDir()
 		{
-			static std::atomic<uint64_t> counter{0};
-			auto name = std::string{"db-test-"} + std::to_string(counter.fetch_add(1));
-			return std::filesystem::temp_directory_path() / "bitcask-db-tests" / name;
+			return test::MakeUniqueTempDir("db-test");
 		}
 
 		void SetUp() override
 		{
 			dir = MakeUniqueDir();
-			std::error_code ec;
-			std::filesystem::remove_all(dir, ec); // clean slate in case a prior run left it behind
 		}
 
 		void TearDown() override
@@ -740,9 +737,8 @@ namespace
 
 	TEST_F(DBTest, DifferentDirectoriesDoNotConflict)
 	{
-		auto dir2 = dir.parent_path() / (dir.filename().string() + "-second");
-		std::error_code ec;
-		std::filesystem::remove_all(dir2, ec);
+		test::ScopedTempDir secondDir("db-test-second");
+		auto dir2 = secondDir.path();
 
 		auto db1Or = DB::Open(MakeOptions());
 		ASSERT_TRUE(db1Or.ok()) << db1Or.status();
@@ -761,8 +757,6 @@ namespace
 		ASSERT_TRUE(db2->Put("k", "from-db2").ok());
 		EXPECT_EQ(*db1->Get("k"), "from-db1");
 		EXPECT_EQ(*db2->Get("k"), "from-db2");
-
-		std::filesystem::remove_all(dir2, ec);
 	}
 
 	// === bytesPerSync 测试 ===
@@ -860,6 +854,46 @@ namespace
 		ASSERT_TRUE(statOr.ok()) << statOr.status();
 		// syncOnWrite 路径每次写后 sync+清零, bytesPerSync 路径不再累计
 		EXPECT_EQ(statOr->bytesWrite, 0);
+	}
+
+	TEST_F(DBTest, ReopenSwitchesFromMmapToFileIO)
+	{
+		// 用小文件阈值产生多个历史数据文件, 确保 reopen 时 MmapIO 会被使用
+		constexpr uint64_t kMaxFileSize = 64;
+		{
+			auto dbOr = DB::Open(MakeOptions(kMaxFileSize, /*syncOnWrite=*/true));
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+
+			for (int i = 0; i < 10; ++i)
+			{
+				auto key = std::string{"key"} + std::to_string(i);
+				auto value = std::string{"value"} + std::to_string(i);
+				ASSERT_TRUE(db->Put(key, value).ok());
+			}
+		}
+
+		// 第二次打开: 启动阶段用 MmapIO 加载索引, 完成后切换为 FileIO
+		{
+			auto dbOr = DB::Open(MakeOptions(kMaxFileSize, /*syncOnWrite=*/true));
+			ASSERT_TRUE(dbOr.ok()) << dbOr.status();
+			auto db = std::move(*dbOr);
+
+			for (int i = 0; i < 10; ++i)
+			{
+				auto key = std::string{"key"} + std::to_string(i);
+				auto expected = std::string{"value"} + std::to_string(i);
+				auto valOr = db->Get(key);
+				ASSERT_TRUE(valOr.ok()) << valOr.status();
+				EXPECT_EQ(*valOr, expected);
+			}
+
+			// 切换为 FileIO 后, 活跃文件应能正常追加写入
+			ASSERT_TRUE(db->Put("new-key", "new-value").ok());
+			auto newValOr = db->Get("new-key");
+			ASSERT_TRUE(newValOr.ok()) << newValOr.status();
+			EXPECT_EQ(*newValOr, "new-value");
+		}
 	}
 
 } // namespace

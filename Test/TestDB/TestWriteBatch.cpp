@@ -1,10 +1,11 @@
 #include "DB/DB.h"
 #include "DB/WriteBatch.h"
 
+#include "../TestTempDir.h"
+
 #include <absl/status/status.h>
 #include <gtest/gtest.h>
 
-#include <atomic>
 #include <filesystem>
 #include <string>
 #include <system_error>
@@ -19,16 +20,12 @@ namespace bitcask
 		protected:
 			static std::filesystem::path MakeUniqueDir()
 			{
-				static std::atomic_uint64_t counter{0};
-				auto name = std::string{"wb-test-"} + std::to_string(counter.fetch_add(1));
-				return std::filesystem::temp_directory_path() / "bitcask-wb-tests" / name;
+				return test::MakeUniqueTempDir("wb-test");
 			}
 
 			void SetUp() override
 			{
 				dir = MakeUniqueDir();
-				std::error_code ec;
-				std::filesystem::remove_all(dir, ec);
 			}
 
 			void TearDown() override

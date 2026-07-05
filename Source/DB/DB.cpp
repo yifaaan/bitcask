@@ -164,6 +164,12 @@ namespace bitcask
 		{
 			return status;
 		}
+
+		// 索引构建完成后，将启动阶段使用的只读 MmapIO 切换为可写 FileIO
+		if (auto status = db->SwitchDataFilesToStandardIO(); !status.ok())
+		{
+			return status;
+		}
 		return db;
 	}
 
@@ -256,7 +262,7 @@ namespace bitcask
 		std::ranges::sort(fids);
 		for (auto fid : fids)
 		{
-			auto fileOr = DataFile::Open(options.dataDir, fid, IOType::Standard);
+			auto fileOr = DataFile::Open(options.dataDir, fid, IOType::MMap);
 			if (!fileOr.ok())
 			{
 				return fileOr.status();
@@ -328,6 +334,46 @@ namespace bitcask
 		// 回放重建可回收空间统计
 		reclaimSize = reclaimable;
 
+		return absl::OkStatus();
+	}
+
+	absl::Status DB::SwitchDataFilesToStandardIO()
+	{
+		for (auto& [fid, file] : olderFiles)
+		{
+			if (auto status = ReopenDataFileWithIOType(file, IOType::Standard); !status.ok())
+			{
+				return status;
+			}
+		}
+
+		return ReopenDataFileWithIOType(activeFile, IOType::Standard);
+	}
+
+	absl::Status DB::ReopenDataFileWithIOType(std::unique_ptr<DataFile>& file, IOType ioType)
+	{
+		if (!file)
+		{
+			return absl::OkStatus();
+		}
+
+		const uint32_t fid = file->fid;
+		const int64_t writeOffset = file->writeOffset;
+
+		if (auto status = file->Close(); !status.ok())
+		{
+			return status;
+		}
+		file.reset();
+
+		auto newFileOr = DataFile::Open(options.dataDir, fid, ioType);
+		if (!newFileOr.ok())
+		{
+			return newFileOr.status();
+		}
+
+		file = std::move(*newFileOr);
+		file->writeOffset = writeOffset;
 		return absl::OkStatus();
 	}
 
