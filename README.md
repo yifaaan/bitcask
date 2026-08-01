@@ -6,7 +6,7 @@ Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加�
 ## 当前进度
 
 项目仍在持续开发中。当前 `main` 分支已经具备可工作的追加写存储流程、内存
-索引和数据库层测试。
+索引、数据库层测试和批量原子写入（WriteBatch）支持。
 
 | 状态 | 模块或功能 | 当前情况 |
 | --- | --- | --- |
@@ -20,7 +20,7 @@ Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加�
 | [x] 已完成 | 遍历和批量读取 | 已支持 `DB.NewIterator`、`DB.ListKeys` 和 `DB.Fold`，支持正逆序、前缀过滤和 `Seek`。 |
 | [x] 已完成 | 单元测试 | 已覆盖文件 IO、日志记录、数据库操作、重启恢复、数据文件轮换和遍历 API。 |
 | [x] 已完成 | 基础示例 | `examples/` 下提供基础数据库操作示例。 |
-| [ ] 进行中 | ART 索引 | 类型已经声明，但具体实现尚未完成。 |
+| [x] 已完成 | WriteBatch 原子写 | `WriteBatch` 支持批量原子写入（Put/Delete），通过序列号保证事务性，恢复时正确重建索引。 |
 | [x] 已完成 | 数据库生命周期 | `DB.Close` 已支持关闭 active 文件和旧数据文件。 |
 | [ ] 进行中 | 可靠性和并发测试 | 崩溃模拟、损坏记录恢复和更完整的并发测试仍待补充。 |
 | [ ] 未开始 | 命令行工具和服务端 | 当前尚未提供 CLI 或服务端程序。 |
@@ -32,7 +32,7 @@ Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加�
 | 状态 | 阶段 | 计划 |
 | --- | --- | --- |
 | [x] | 1 | 迭代器支持 |
-| [ ] | 2 | WriteBatch 原子写 |
+| [x] | 2 | WriteBatch 原子写 |
 | [ ] | 3 | Merge 数据清理 |
 | [ ] | 4 | 内存索引优化 |
 | [ ] | 5 | 文件 IO 优化 |
@@ -61,11 +61,20 @@ DB -> DataFile -> IOManager -> FileIO -> os.File
 key -> { file id, file offset }
 ```
 
-读取和遍历路径如下：
+普通读取和遍历路径如下：
 
 ```text
 DB -> Iterator -> Index Iterator -> B-tree
 ```
+
+普通写入链路如下：
+
+```text
+DB.Put -> appendLogRecordWithLock -> DataFile -> IOManager -> FileIO -> os.File
+```
+
+`WriteBatch` 提交时沿用同样的写入链路，但其记录的 key 会附带一个全局递增的
+事务序列号，并以一条 `LOG_RECORD_TXN_FINISH` 记录标识该事务结束。
 
 日志记录的格式为编码后的 header 加 key 和 value：
 
@@ -76,6 +85,16 @@ CRC | record type | key size | value size | key | value
 其中 key size 和 value size 使用 varint 编码。删除操作会追加一条删除记录，
 数据库恢复时根据这条记录从内存索引中移除对应 key。
 
+`WriteBatch` 中的记录类型：
+
+- `LOG_RECORD_NORMAL`            普通（写入）记录
+- `LOG_RECORD_DELETED`           删除记录
+- `LOG_RECORD_TXN_FINISH`        事务结束标记
+
+启动恢复时，附有事务序列号的记录会被暂存，当读到对应序列号的 `LOG_RECORD_TXN_FINISH`
+记录时整批更新到内存索引；若程序在事务中途崩溃，未结束的事务记录会被丢弃，
+从而保证批量写入的原子性。
+
 ## 目录结构
 
 ```text
@@ -84,7 +103,9 @@ CRC | record type | key size | value size | key | value
 |-- db_test.go              数据库集成测试
 |-- iterator.go             面向用户的迭代器
 |-- iterator_test.go        迭代器测试
-|-- options.go              数据库和迭代器配置
+|-- batch.go                批量原子写
+|-- batch_test.go           WriteBatch 测试
+|-- options.go              数据库、迭代器和 WriteBatch 配置
 |-- errors.go               包级错误定义
 |-- data/
 |   |-- data_file.go        追加写数据文件
