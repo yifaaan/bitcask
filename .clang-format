@@ -1,0 +1,16 @@
+---
+Language: Cpp
+BasedOnStyle: Microsoft
+
+ColumnLimit: 0
+UseTab: Always
+TabWidth: 4
+IndentWidth: 4
+NamespaceIndentation: All
+SpaceBeforeParens: ControlStatements
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+AccessModifierOffset: -4
