@@ -29,7 +29,7 @@ type LogRecord struct {
 	Type  LogRecordType
 }
 
-// EncodeLogRecord 对 LogRecord 编码，返回编码后的字节数组和长度
+// EncodeLogRecord 对 LogRecord 编码，将其转换成最终写入到文件中的一条记录，返回编码后的字节数组和长度
 func EncodeLogRecord(lr *LogRecord) ([]byte, int64) {
 	return nil, 0
 }
