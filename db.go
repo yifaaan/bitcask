@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/yifaaan/bitcask/data"
 	"github.com/yifaaan/bitcask/index"
@@ -19,7 +20,8 @@ type DB struct {
 	olderFiles map[uint32]*data.DataFile
 	options    Options
 	index      index.Indexer
-	fids       []int // 只在启动时加载索引时使用
+	fids       []int         // 只在启动时加载索引时使用
+	seqNo      atomic.Uint64 // 事务序列号，全局递增
 }
 
 func Open(options Options) (*DB, error) {
@@ -104,6 +106,21 @@ func (db *DB) loadIndexFromDataFiles() error {
 		return nil
 	}
 
+	updateIndex := func(key []byte, typ data.LogRecordType, pos *data.LogRecordPos) {
+		var ok bool
+		if typ == data.LOG_RECORD_DELETED {
+			ok = db.index.Delete(key)
+		} else {
+			ok = db.index.Put(key, pos)
+		}
+		if !ok {
+			panic("failed to update index at startup")
+		}
+	}
+
+	// 暂存同一个事务的记录
+	transactionRecords := make(map[uint64][]*data.TransactionRecord)
+	var currentSeqNo uint64
 	for i, fid := range db.fids {
 		var df *data.DataFile
 		if fid == int(db.activeFile.FileId) {
@@ -126,14 +143,33 @@ func (db *DB) loadIndexFromDataFiles() error {
 				Fid:    uint32(fid),
 				Offset: off,
 			}
-			var ok bool
-			if lr.Type == data.LOG_RECORD_DELETED {
-				ok = db.index.Delete(lr.Key)
+
+			// 解析seqNo和实际的key
+			realKey, seqNo := parseLogRecordKeyWithSeq(lr.Key)
+
+			if seqNo == NON_TRANSACTION_SEQ_NO {
+				// 改记录属于非事务提交，直接更新索引
+				updateIndex(realKey, lr.Type, pos)
 			} else {
-				ok = db.index.Put(lr.Key, pos)
+				// 事务提交，先暂存
+				// 如果找到标识某事务结束的记录，将该事务的所有记录更新到内存索引
+				if lr.Type == data.LOG_RECORD_TXN_FINISH {
+					for _, txnRecord := range transactionRecords[seqNo] {
+						updateIndex(txnRecord.Record.Key, txnRecord.Record.Type, txnRecord.Pos)
+					}
+					delete(transactionRecords, seqNo)
+				} else {
+					lr.Key = realKey
+					transactionRecords[seqNo] = append(transactionRecords[seqNo], &data.TransactionRecord{
+						Record: lr,
+						Pos:    pos,
+					})
+				}
 			}
-			if !ok {
-				return ErrIndexUpdateFailed
+
+			// 更新最新的事务序列号
+			if seqNo > currentSeqNo {
+				currentSeqNo = seqNo
 			}
 
 			off += len
@@ -144,6 +180,9 @@ func (db *DB) loadIndexFromDataFiles() error {
 			db.activeFile.WriteOff = off
 		}
 	}
+
+	db.seqNo.Store(currentSeqNo)
+
 	return nil
 }
 
@@ -156,8 +195,8 @@ func (db *DB) Delete(key []byte) error {
 		return nil
 	}
 
-	lr := &data.LogRecord{Key: key, Type: data.LOG_RECORD_DELETED}
-	_, err := db.appendLogRecord(lr)
+	lr := &data.LogRecord{Key: logRecordKeyWithSeq(key, NON_TRANSACTION_SEQ_NO), Type: data.LOG_RECORD_DELETED}
+	_, err := db.appendLogRecordWithLock(lr)
 	if err != nil {
 		return err
 	}
@@ -174,10 +213,10 @@ func (db *DB) Put(key []byte, value []byte) error {
 		return ErrKeyIsEmpty
 	}
 	// 构造 LogRecord
-	lr := &data.LogRecord{Key: key, Value: value, Type: data.LOG_RECORD_NORMAL}
+	lr := &data.LogRecord{Key: logRecordKeyWithSeq(key, NON_TRANSACTION_SEQ_NO), Value: value, Type: data.LOG_RECORD_NORMAL}
 
 	// 写入数据文件
-	pos, err := db.appendLogRecord(lr)
+	pos, err := db.appendLogRecordWithLock(lr)
 	if err != nil {
 		return err
 	}
@@ -189,11 +228,14 @@ func (db *DB) Put(key []byte, value []byte) error {
 	return nil
 }
 
-// appendLogRecord 将记录写入数据文件，返回对应的位置索引
-func (db *DB) appendLogRecord(lr *data.LogRecord) (*data.LogRecordPos, error) {
+func (db *DB) appendLogRecordWithLock(lr *data.LogRecord) (*data.LogRecordPos, error) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
+	return db.appendLogRecord(lr)
+}
 
+// appendLogRecord 将记录写入数据文件，返回对应的位置索引
+func (db *DB) appendLogRecord(lr *data.LogRecord) (*data.LogRecordPos, error) {
 	// 判断是否初始化活跃数据文件
 	if db.activeFile == nil {
 		if err := db.setActiveDataFile(); err != nil {

@@ -10,6 +10,7 @@ type LogRecordType = byte
 const (
 	LOG_RECORD_NORMAL LogRecordType = iota
 	LOG_RECORD_DELETED
+	LOG_RECORD_TXN_FINISH
 )
 
 // 编码后的 log record 的 header 的最大长度
@@ -102,4 +103,9 @@ func getLogRecordCRC(lr *LogRecord, headerBuf []byte) uint32 {
 	crc = crc32.Update(crc, crc32.IEEETable, lr.Value)
 
 	return crc
+}
+
+type TransactionRecord struct {
+	Record *LogRecord
+	Pos    *LogRecordPos
 }
