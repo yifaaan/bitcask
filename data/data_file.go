@@ -10,7 +10,11 @@ import (
 	"github.com/yifaaan/bitcask/fio"
 )
 
-const DATA_FILE_NAME_SUFFIX = ".data"
+const (
+	DATA_FILE_NAME_SUFFIX    = ".data"
+	HINT_FILE_NAME           = "hint-index"
+	MERGE_FINISHED_FILE_NAME = "merge-finished"
+)
 
 var (
 	ErrInvalidCRC = errors.New("invalid crc value")
@@ -25,6 +29,20 @@ type DataFile struct {
 
 func OpenDataFile(dirPath string, fid uint32) (*DataFile, error) {
 	name := filepath.Join(dirPath, fmt.Sprintf("%09d", fid)+DATA_FILE_NAME_SUFFIX)
+	return newDataFile(name, fid)
+}
+
+func OpenHintFile(dirPath string) (*DataFile, error) {
+	name := filepath.Join(dirPath, HINT_FILE_NAME)
+	return newDataFile(name, 0)
+}
+
+func OpenMergeFinishedFile(dirPath string) (*DataFile, error) {
+	name := filepath.Join(dirPath, MERGE_FINISHED_FILE_NAME)
+	return newDataFile(name, 0)
+}
+
+func newDataFile(name string, fid uint32) (*DataFile, error) {
 	iom, err := fio.NewIOManager(name)
 	if err != nil {
 		return nil, err
@@ -47,6 +65,16 @@ func (df *DataFile) Write(buf []byte) error {
 	}
 	df.WriteOff += int64(n)
 	return nil
+}
+
+// WriteHintRecord 写入一条 hint 索引记录
+func (df *DataFile) WriteHintRecord(key []byte, pos *LogRecordPos) error {
+	lr := &LogRecord{
+		Key:   key,
+		Value: EncodeLogRecordPos(pos),
+	}
+	buf, _ := EncodeLogRecord(lr)
+	return df.Write(buf)
 }
 
 func (df *DataFile) Close() error {

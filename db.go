@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -22,6 +23,7 @@ type DB struct {
 	index      index.Indexer
 	fids       []int         // 只在启动时加载索引时使用
 	seqNo      atomic.Uint64 // 事务序列号，全局递增
+	isMerging  bool
 }
 
 func Open(options Options) (*DB, error) {
@@ -43,8 +45,17 @@ func Open(options Options) (*DB, error) {
 		index:      index.NewIndexer(options.IndexType),
 	}
 
+	// 加载 merge 数据目录
+	if err := db.loadMergeFiles(); err != nil {
+		return nil, err
+	}
+
 	// 加载数据文件,初始化 db 的每个数据文件指针
 	if err := db.loadDataFiles(); err != nil {
+		return nil, err
+	}
+
+	if err := db.loadIndexFromHintFile(); err != nil {
 		return nil, err
 	}
 
@@ -106,6 +117,17 @@ func (db *DB) loadIndexFromDataFiles() error {
 		return nil
 	}
 
+	// merge 过的已经从 hint 文件加载索引了
+	hasMerge, nonMergeFid := false, uint32(0)
+	mergeFinFileName := filepath.Join(db.options.DirPath, data.MERGE_FINISHED_FILE_NAME)
+	if _, err := os.Stat(mergeFinFileName); err == nil {
+		nonMergeFid, err = db.getNonMergeFileId(db.options.DirPath)
+		if err != nil {
+			return err
+		}
+		hasMerge = true
+	}
+
 	updateIndex := func(key []byte, typ data.LogRecordType, pos *data.LogRecordPos) {
 		var ok bool
 		if typ == data.LOG_RECORD_DELETED {
@@ -122,6 +144,10 @@ func (db *DB) loadIndexFromDataFiles() error {
 	transactionRecords := make(map[uint64][]*data.TransactionRecord)
 	var currentSeqNo uint64
 	for i, fid := range db.fids {
+		if hasMerge && fid < int(nonMergeFid) {
+			continue
+		}
+
 		var df *data.DataFile
 		if fid == int(db.activeFile.FileId) {
 			df = db.activeFile

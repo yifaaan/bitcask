@@ -109,3 +109,23 @@ type TransactionRecord struct {
 	Record *LogRecord
 	Pos    *LogRecordPos
 }
+
+// EncodeLogRecordPos 对 pos 编码，用于写入 hint 索引文件
+func EncodeLogRecordPos(pos *LogRecordPos) []byte {
+	buf := make([]byte, binary.MaxVarintLen32+binary.MaxVarintLen64)
+	var idx = 0
+	idx += binary.PutVarint(buf[idx:], int64(pos.Fid))
+	idx += binary.PutVarint(buf[idx:], int64(pos.Offset))
+	return buf[:idx]
+}
+
+func DecodeLogRecordPos(buf []byte) *LogRecordPos {
+	var idx = 0
+	fileId, n := binary.Varint(buf[idx:])
+	idx += n
+	offset, _ := binary.Varint(buf[idx:])
+	return &LogRecordPos{
+		Fid:    uint32(fileId),
+		Offset: offset,
+	}
+}
