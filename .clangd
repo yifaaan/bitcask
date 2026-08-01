@@ -1,6 +1,0 @@
-CompileFlags:
-  CompilationDatabase: build/cmake/windows-msvc-debug
-  Add:
-    - --target=x86_64-pc-windows-msvc
-    - -std=c++20
-
