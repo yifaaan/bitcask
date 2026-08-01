@@ -7,6 +7,13 @@ import (
 	"github.com/yifaaan/bitcask/data"
 )
 
+type IndexType = byte
+
+const (
+	BTREE IndexType = iota
+	ART
+)
+
 type Indexer interface {
 	// 向索引中存储key对应的数据位置信息
 	Put(key []byte, pos *data.LogRecordPos) bool
@@ -25,4 +32,14 @@ type Item struct {
 // 为*Item实现btree.Item接口
 func (i *Item) Less(than btree.Item) bool {
 	return bytes.Compare(i.key, than.(*Item).key) == -1
+}
+
+func NewIndexer(t IndexType) Indexer {
+	switch t {
+	case BTREE:
+		return NewBTree()
+	case ART:
+		return nil
+	}
+	return nil
 }
