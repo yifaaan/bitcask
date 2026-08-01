@@ -22,3 +22,13 @@ var DefaultOptions = Options{
 	SyncWrite:    false,
 	IndexType:    index.BTREE,
 }
+
+type IteratorOptions struct {
+	Prefix  []byte
+	Reverse bool
+}
+
+var DefaultIteratorOptions = IteratorOptions{
+	Prefix:  nil,
+	Reverse: false,
+}

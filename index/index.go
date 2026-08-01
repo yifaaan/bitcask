@@ -21,6 +21,9 @@ type Indexer interface {
 	Get(key []byte) *data.LogRecordPos
 	// 根据key删除对应的数据位置信息
 	Delete(key []byte) bool
+
+	// Iterator 索引迭代器
+	Iterator(reverse bool) Iterator
 }
 
 // for BTree's item
@@ -42,4 +45,19 @@ func NewIndexer(t IndexType) Indexer {
 		return nil
 	}
 	return nil
+}
+
+type Iterator interface {
+	Rewind()
+
+	Seek(key []byte)
+
+	Next()
+
+	Valid() bool
+
+	Key() []byte
+
+	Value() *data.LogRecordPos
+	Close()
 }

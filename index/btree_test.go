@@ -54,3 +54,119 @@ func TestBTree_Delete(t *testing.T) {
 	res4 := bt.Delete([]byte("aaa"))
 	assert.True(t, res4)
 }
+
+func newBTreeForIteratorTest() *BTree {
+	bt := NewBTree()
+	for i, key := range []string{"b", "a", "d"} {
+		bt.Put([]byte(key), &data.LogRecordPos{Offset: int64(i)})
+	}
+	return bt
+}
+
+func TestBTreeIterator_IterationOrder(t *testing.T) {
+	tests := []struct {
+		name    string
+		reverse bool
+		want    []string
+	}{
+		{
+			name: "forward",
+			want: []string{"a", "b", "d"},
+		},
+		{
+			name:    "reverse",
+			reverse: true,
+			want:    []string{"d", "b", "a"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			it := newBTreeForIteratorTest().Iterator(tt.reverse)
+			defer it.Close()
+
+			var got []string
+			for it.Rewind(); it.Valid(); it.Next() {
+				got = append(got, string(it.Key()))
+			}
+
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestBTreeIterator_Seek(t *testing.T) {
+	tests := []struct {
+		name      string
+		reverse   bool
+		seek      string
+		wantKey   string
+		wantValid bool
+	}{
+		{
+			name:      "forward exact",
+			seek:      "b",
+			wantKey:   "b",
+			wantValid: true,
+		},
+		{
+			name:      "forward next greater",
+			seek:      "c",
+			wantKey:   "d",
+			wantValid: true,
+		},
+		{
+			name:      "forward before first",
+			seek:      "0",
+			wantKey:   "a",
+			wantValid: true,
+		},
+		{
+			name:    "forward after last",
+			seek:    "z",
+			wantKey: "",
+		},
+		{
+			name:      "reverse exact",
+			reverse:   true,
+			seek:      "b",
+			wantKey:   "b",
+			wantValid: true,
+		},
+		{
+			name:      "reverse next smaller",
+			reverse:   true,
+			seek:      "c",
+			wantKey:   "b",
+			wantValid: true,
+		},
+		{
+			name:      "reverse after largest",
+			reverse:   true,
+			seek:      "z",
+			wantKey:   "d",
+			wantValid: true,
+		},
+		{
+			name:    "reverse before smallest",
+			reverse: true,
+			seek:    "0",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			it := newBTreeForIteratorTest().Iterator(tt.reverse)
+			defer it.Close()
+
+			it.Seek([]byte(tt.seek))
+			if !tt.wantValid {
+				assert.False(t, it.Valid())
+				return
+			}
+
+			assert.True(t, it.Valid())
+			assert.Equal(t, tt.wantKey, string(it.Key()))
+		})
+	}
+}

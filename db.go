@@ -261,6 +261,11 @@ func (db *DB) Get(key []byte) ([]byte, error) {
 		return nil, ErrKeyNotFound
 	}
 
+	return db.getValueByPosition(pos)
+}
+
+// 根据索引信息获取对应的 value
+func (db *DB) getValueByPosition(pos *data.LogRecordPos) ([]byte, error) {
 	var dataFile *data.DataFile
 	if db.activeFile.FileId == pos.Fid {
 		dataFile = db.activeFile
