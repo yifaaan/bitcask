@@ -136,6 +136,122 @@ func TestDBPutGetDelete(t *testing.T) {
 	}
 }
 
+func requireKeys(t *testing.T, got [][]byte, want []string) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("ListKeys() returned %d keys, want %d", len(got), len(want))
+	}
+	for i, key := range got {
+		if string(key) != want[i] {
+			t.Fatalf("ListKeys()[%d] = %q, want %q", i, key, want[i])
+		}
+	}
+}
+
+func TestDBListKeys(t *testing.T) {
+	db, _ := openTestDB(t)
+	defer closeTestDB(t, db)
+
+	for _, entry := range []struct {
+		key   string
+		value string
+	}{
+		{key: "charlie", value: "3"},
+		{key: "alpha", value: "1"},
+		{key: "bravo", value: "2"},
+	} {
+		if err := db.Put([]byte(entry.key), []byte(entry.value)); err != nil {
+			t.Fatalf("Put(%q) error = %v", entry.key, err)
+		}
+	}
+
+	requireKeys(t, db.ListKeys(), []string{"alpha", "bravo", "charlie"})
+
+	if err := db.Delete([]byte("bravo")); err != nil {
+		t.Fatalf("Delete(%q) error = %v", "bravo", err)
+	}
+	requireKeys(t, db.ListKeys(), []string{"alpha", "charlie"})
+}
+
+type foldEntry struct {
+	key   string
+	value string
+}
+
+func requireFoldEntries(t *testing.T, got, want []foldEntry) {
+	t.Helper()
+
+	if len(got) != len(want) {
+		t.Fatalf("Fold() visited %d entries, want %d", len(got), len(want))
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			t.Fatalf("Fold() entry[%d] = %#v, want %#v", i, got[i], want[i])
+		}
+	}
+}
+
+func TestDBFold(t *testing.T) {
+	db, _ := openTestDB(t)
+	defer closeTestDB(t, db)
+
+	for _, entry := range []struct {
+		key   string
+		value string
+	}{
+		{key: "charlie", value: "3"},
+		{key: "alpha", value: "1"},
+		{key: "bravo", value: "2"},
+	} {
+		if err := db.Put([]byte(entry.key), []byte(entry.value)); err != nil {
+			t.Fatalf("Put(%q) error = %v", entry.key, err)
+		}
+	}
+	if err := db.Put([]byte("bravo"), []byte("updated")); err != nil {
+		t.Fatalf("updating %q error = %v", "bravo", err)
+	}
+
+	var got []foldEntry
+	err := db.Fold(func(key, value []byte) bool {
+		got = append(got, foldEntry{key: string(key), value: string(value)})
+		return true
+	})
+	if err != nil {
+		t.Fatalf("Fold() error = %v", err)
+	}
+
+	requireFoldEntries(t, got, []foldEntry{
+		{key: "alpha", value: "1"},
+		{key: "bravo", value: "updated"},
+		{key: "charlie", value: "3"},
+	})
+}
+
+func TestDBFoldStopsWhenCallbackReturnsFalse(t *testing.T) {
+	db, _ := openTestDB(t)
+	defer closeTestDB(t, db)
+
+	for _, key := range []string{"charlie", "alpha", "bravo"} {
+		if err := db.Put([]byte(key), []byte(key)); err != nil {
+			t.Fatalf("Put(%q) error = %v", key, err)
+		}
+	}
+
+	var got []string
+	err := db.Fold(func(key, value []byte) bool {
+		got = append(got, string(key))
+		return string(key) != "bravo"
+	})
+	if err != nil {
+		t.Fatalf("Fold() error = %v", err)
+	}
+
+	if len(got) != 2 || got[0] != "alpha" || got[1] != "bravo" {
+		t.Fatalf("Fold() visited keys = %v, want [alpha bravo]", got)
+	}
+}
+
 func TestDBReopenRecoversLatestRecords(t *testing.T) {
 	opts := testOptions(t)
 	db, err := Open(opts)

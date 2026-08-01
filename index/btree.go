@@ -53,6 +53,10 @@ func (bt *BTree) Iterator(reverse bool) Iterator {
 	return newBTreeIterator(bt.tree, reverse)
 }
 
+func (bt *BTree) Size() int {
+	return bt.tree.Len()
+}
+
 var _ Iterator = (*btreeIterator)(nil)
 
 type btreeIterator struct {

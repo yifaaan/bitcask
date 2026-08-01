@@ -24,6 +24,8 @@ type Indexer interface {
 
 	// Iterator 索引迭代器
 	Iterator(reverse bool) Iterator
+
+	Size() int
 }
 
 // for BTree's item

@@ -17,10 +17,11 @@ Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加�
 | [x] 已完成 | B-tree 索引 | 基于 `github.com/google/btree`，更新操作带锁。 |
 | [x] 已完成 | 数据库启动和恢复 | 支持创建数据目录、扫描数据文件、选择 active 文件和重建内存索引。 |
 | [x] 已完成 | 基础键值操作 | `DB.Put`、`DB.Get` 和 `DB.Delete` 已支持 key 校验、删除标记、文件轮换和最新值恢复。 |
-| [x] 已完成 | 单元测试 | 已覆盖文件 IO、日志记录、数据库操作、重启恢复和数据文件轮换。 |
+| [x] 已完成 | 遍历和批量读取 | 已支持 `DB.NewIterator`、`DB.ListKeys` 和 `DB.Fold`，支持正逆序、前缀过滤和 `Seek`。 |
+| [x] 已完成 | 单元测试 | 已覆盖文件 IO、日志记录、数据库操作、重启恢复、数据文件轮换和遍历 API。 |
 | [x] 已完成 | 基础示例 | `examples/` 下提供基础数据库操作示例。 |
 | [ ] 进行中 | ART 索引 | 类型已经声明，但具体实现尚未完成。 |
-| [ ] 进行中 | 数据库生命周期 | `DB` 尚未公开 `Close` 方法，目前测试直接关闭底层数据文件。 |
+| [x] 已完成 | 数据库生命周期 | `DB.Close` 已支持关闭 active 文件和旧数据文件。 |
 | [ ] 进行中 | 可靠性和并发测试 | 崩溃模拟、损坏记录恢复和更完整的并发测试仍待补充。 |
 | [ ] 未开始 | 命令行工具和服务端 | 当前尚未提供 CLI 或服务端程序。 |
 
@@ -30,7 +31,7 @@ Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加�
 
 | 状态 | 阶段 | 计划 |
 | --- | --- | --- |
-| [ ] | 1 | 迭代器支持 |
+| [x] | 1 | 迭代器支持 |
 | [ ] | 2 | WriteBatch 原子写 |
 | [ ] | 3 | Merge 数据清理 |
 | [ ] | 4 | 内存索引优化 |
@@ -60,6 +61,12 @@ DB -> DataFile -> IOManager -> FileIO -> os.File
 key -> { file id, file offset }
 ```
 
+读取和遍历路径如下：
+
+```text
+DB -> Iterator -> Index Iterator -> B-tree
+```
+
 日志记录的格式为编码后的 header 加 key 和 value：
 
 ```text
@@ -73,9 +80,11 @@ CRC | record type | key size | value size | key | value
 
 ```text
 .
-|-- db.go                   数据库打开、恢复和键值操作
+|-- db.go                   数据库打开、恢复、键值操作和遍历 API
 |-- db_test.go              数据库集成测试
-|-- options.go              数据库配置
+|-- iterator.go             面向用户的迭代器
+|-- iterator_test.go        迭代器测试
+|-- options.go              数据库和迭代器配置
 |-- errors.go               包级错误定义
 |-- data/
 |   |-- data_file.go        追加写数据文件
@@ -94,6 +103,58 @@ CRC | record type | key size | value size | key | value
     `-- basic_operation.go  基础数据库操作示例
 ```
 
+## 遍历 API
+
+### ListKeys
+
+`ListKeys` 返回当前索引中的所有 key。当前 B-tree 实现按 key 的字典序返回，已删除的 key 不会出现在结果中。
+
+```go
+for _, key := range db.ListKeys() {
+	fmt.Println(string(key))
+}
+```
+
+### Fold
+
+`Fold` 按正序遍历所有 key 和最新 value。回调返回 `false` 时停止遍历；读取数据失败时返回错误。
+
+```go
+err := db.Fold(func(key, value []byte) bool {
+	fmt.Printf("%s = %s\n", key, value)
+	return true
+})
+if err != nil {
+	log.Fatal(err)
+}
+```
+
+回调在数据库读锁期间执行，回调中不要调用 `Put`、`Delete` 或 `Close` 等会修改或关闭数据库的方法。
+
+### Iterator
+
+`NewIterator` 支持正序、逆序和前缀过滤。调用 `Rewind` 或 `Seek` 定位后，通过 `Valid`、`Key`、`Value` 和 `Next` 读取数据。
+
+```go
+it := db.NewIterator(bitcask.IteratorOptions{
+	Prefix:  []byte("user:"),
+	Reverse: false,
+})
+defer it.Close()
+
+it.Rewind()
+for it.Valid() {
+	value, err := it.Value()
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s = %s\n", it.Key(), value)
+	it.Next()
+}
+```
+
+对于正序迭代，`Seek(key)` 定位到第一个大于等于 `key` 的位置；对于逆序迭代，定位到当前遍历方向下第一个不大于 `key` 的位置。
+
 ## 环境要求
 
 - Go 1.24.5 或更高版本
@@ -110,6 +171,12 @@ go test ./...
 
 ```powershell
 go test . -run '^TestDBPutGetDelete$' -v
+```
+
+运行遍历相关测试：
+
+```powershell
+go test ./... -run 'Test(DBListKeys|DBFold|.*Iterator)' -v
 ```
 
 ## 运行示例
