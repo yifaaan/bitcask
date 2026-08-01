@@ -1,6 +1,9 @@
 package data
 
-import "encoding/binary"
+import (
+	"encoding/binary"
+	"hash/crc32"
+)
 
 type LogRecordType = byte
 
@@ -11,6 +14,7 @@ const (
 
 // 编码后的 log record 的 header 的最大长度
 // crc type keySize valSize
+//
 //	4    1
 const MAX_LOG_RECORD_HEADER_SIZE = 4 + 1 + binary.MaxVarintLen32*2
 
@@ -30,8 +34,32 @@ type LogRecord struct {
 }
 
 // EncodeLogRecord 对 LogRecord 编码，将其转换成最终写入到文件中的一条记录，返回编码后的字节数组和长度
+//
+// +----------+------+----------+------------+---------+--------+
+// |   crc    | type | key size | value size |  key    | value  |
+// +----------+------+----------+------------+---------+--------+
+//
+//	4         1    var(max 5)  var(max 5)     var       var
 func EncodeLogRecord(lr *LogRecord) ([]byte, int64) {
-	return nil, 0
+	header := make([]byte, MAX_LOG_RECORD_HEADER_SIZE)
+
+	header[4] = lr.Type
+	var idx = 5
+	idx += binary.PutVarint(header[idx:], int64(len(lr.Key)))
+	idx += binary.PutVarint(header[idx:], int64(len(lr.Value)))
+
+	// 编码之后一条完整记录的长度
+	var size = idx + len(lr.Key) + len(lr.Value)
+	buf := make([]byte, size)
+
+	copy(buf[:idx], header[:idx])
+	copy(buf[idx:], lr.Key)
+	copy(buf[idx+len(lr.Key):], lr.Value)
+
+	crc := crc32.ChecksumIEEE(buf[4:])
+	binary.LittleEndian.PutUint32(buf[:4], crc)
+
+	return buf, int64(size)
 }
 
 type logRecordHeader struct {
@@ -43,10 +71,35 @@ type logRecordHeader struct {
 
 // decodeLogRecordHeader 从 buf(max size) 解码 header 结构，并返回其真正的长度
 func decodeLogRecordHeader(buf []byte) (*logRecordHeader, uint32) {
-	return nil, 0
+	if len(buf) <= 4 {
+		return nil, 0
+	}
+
+	header := &logRecordHeader{
+		crc:        binary.LittleEndian.Uint32(buf[:4]),
+		recordType: buf[4],
+	}
+
+	var idx = 5
+	keySize, n := binary.Varint(buf[idx:])
+	header.keySize = uint32(keySize)
+	idx += n
+	valueSize, n := binary.Varint(buf[idx:])
+	header.valueSize = uint32(valueSize)
+	idx += n
+
+	return header, uint32(idx)
 }
 
 // getLogRecordCRC 计算编码后的 crc，headerBuf是 type+keySize+valueSize 的字节数组
 func getLogRecordCRC(lr *LogRecord, headerBuf []byte) uint32 {
-	return 0
+	if lr == nil {
+		return 0
+	}
+
+	crc := crc32.ChecksumIEEE(headerBuf)
+	crc = crc32.Update(crc, crc32.IEEETable, lr.Key)
+	crc = crc32.Update(crc, crc32.IEEETable, lr.Value)
+
+	return crc
 }
