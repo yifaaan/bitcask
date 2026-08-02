@@ -37,15 +37,8 @@ func closeTestDB(t *testing.T, db *DB) {
 		return
 	}
 
-	if db.activeFile != nil {
-		if err := db.activeFile.Close(); err != nil {
-			t.Errorf("close active data file: %v", err)
-		}
-	}
-	for fid, dataFile := range db.olderFiles {
-		if err := dataFile.Close(); err != nil {
-			t.Errorf("close data file %d: %v", fid, err)
-		}
+	if err := db.Close(); err != nil {
+		t.Errorf("close database: %v", err)
 	}
 }
 
@@ -94,6 +87,31 @@ func TestOpenCreatesDirectory(t *testing.T) {
 	}
 	if !info.IsDir() {
 		t.Fatalf("database path is not a directory: %s", opts.DirPath)
+	}
+}
+
+func TestDBFileLock(t *testing.T) {
+	opts := testOptions(t)
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("first Open() error = %v", err)
+	}
+	defer func() {
+		closeTestDB(t, db)
+	}()
+
+	if _, err := Open(opts); !errors.Is(err, ErrDatabaseIsUsing) {
+		t.Fatalf("second Open() error = %v, want %v", err, ErrDatabaseIsUsing)
+	}
+
+	if err := db.Close(); err != nil {
+		t.Fatalf("first Close() error = %v", err)
+	}
+	db = nil
+
+	db, err = Open(opts)
+	if err != nil {
+		t.Fatalf("Open() after Close() error = %v", err)
 	}
 }
 

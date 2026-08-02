@@ -11,8 +11,13 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/gofrs/flock"
 	"github.com/yifaaan/bitcask/data"
 	"github.com/yifaaan/bitcask/index"
+)
+
+const (
+	FILE_LOCK_NAME = "flock"
 )
 
 type DB struct {
@@ -24,6 +29,7 @@ type DB struct {
 	fids       []int         // 只在启动时加载索引时使用
 	seqNo      atomic.Uint64 // 事务序列号，全局递增
 	isMerging  bool
+	fileLock   *flock.Flock
 }
 
 func Open(options Options) (*DB, error) {
@@ -38,11 +44,21 @@ func Open(options Options) (*DB, error) {
 		}
 	}
 
+	// 判断当前目录是否正在被另一个db使用
+	fileLock := flock.New(filepath.Join(options.DirPath, FILE_LOCK_NAME))
+	hold, err := fileLock.TryLock()
+	if err != nil {
+		return nil, err
+	}
+	if !hold {
+		return nil, ErrDatabaseIsUsing
+	}
 	db := &DB{
 		mu:         &sync.RWMutex{},
 		options:    options,
 		olderFiles: make(map[uint32]*data.DataFile),
 		index:      index.NewIndexer(options.IndexType),
+		fileLock:   fileLock,
 	}
 
 	// 加载 merge 数据目录
@@ -384,6 +400,12 @@ func (db *DB) Fold(fn func(key []byte, value []byte) bool) error {
 }
 
 func (db *DB) Close() error {
+	defer func() {
+		if err := db.fileLock.Unlock(); err != nil {
+			panic("failed to unlock the directory")
+		}
+	}()
+
 	if db.activeFile == nil {
 		return nil
 	}

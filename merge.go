@@ -171,6 +171,9 @@ func (db *DB) loadMergeFiles() error {
 	var mergeFileNames []string
 	var mergeFinished bool
 	for _, entry := range dirEntires {
+		if entry.Name() == FILE_LOCK_NAME {
+			continue
+		}
 		mergeFileNames = append(mergeFileNames, entry.Name())
 		if entry.Name() == data.MERGE_FINISHED_FILE_NAME {
 			mergeFinished = true
