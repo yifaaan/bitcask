@@ -5,8 +5,8 @@ Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加�
 
 ## 当前进度
 
-项目仍在持续开发中。当前 `main` 分支已经具备可工作的追加写存储流程、内存
-索引、数据库层测试和批量原子写入（WriteBatch）支持。
+项目仍在持续开发中。当前 `main` 分支已经具备可工作的追加写存储流程、B-tree
+和 ART 内存索引、数据库层测试以及批量原子写入（WriteBatch）支持。
 
 | 状态 | 模块或功能 | 当前情况 |
 | --- | --- | --- |
@@ -14,11 +14,11 @@ Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加�
 | [x] 已完成 | 文件 IO | `fio.FileIO` 支持追加写、按偏移读取、同步、关闭和获取文件大小。 |
 | [x] 已完成 | 数据文件 | `data.DataFile` 支持数据文件命名、写偏移维护和日志记录读取。 |
 | [x] 已完成 | 日志记录 | 已实现记录编码、解码、varint 长度和 CRC32 校验。 |
-| [x] 已完成 | B-tree 索引 | 基于 `github.com/google/btree`，更新操作带锁。 |
+| [x] 已完成 | B-tree 和 ART 索引 | 支持基于 `github.com/google/btree` 的 B-tree 和基于 `github.com/plar/go-adaptive-radix-tree/v2` 的 ART，均提供增删改查、快照迭代和 `Seek`。 |
 | [x] 已完成 | 数据库启动和恢复 | 支持创建数据目录、扫描数据文件、选择 active 文件和重建内存索引。 |
 | [x] 已完成 | 基础键值操作 | `DB.Put`、`DB.Get` 和 `DB.Delete` 已支持 key 校验、删除标记、文件轮换和最新值恢复。 |
 | [x] 已完成 | 遍历和批量读取 | 已支持 `DB.NewIterator`、`DB.ListKeys` 和 `DB.Fold`，支持正逆序、前缀过滤和 `Seek`。 |
-| [x] 已完成 | 单元测试 | 已覆盖文件 IO、日志记录、数据库操作、重启恢复、数据文件轮换和遍历 API。 |
+| [x] 已完成 | 单元测试 | 已覆盖文件 IO、日志记录、数据库操作、重启恢复、数据文件轮换、B-tree/ART 索引和遍历 API。 |
 | [x] 已完成 | 基础示例 | `examples/` 下提供基础数据库操作示例。 |
 | [x] 已完成 | WriteBatch 原子写 | `WriteBatch` 支持批量原子写入（Put/Delete），通过序列号保证事务性，恢复时正确重建索引。 |
 | [x] 已完成 | 数据库生命周期 | `DB.Close` 已支持关闭 active 文件和旧数据文件。 |
@@ -64,7 +64,7 @@ key -> { file id, file offset }
 普通读取和遍历路径如下：
 
 ```text
-DB -> Iterator -> Index Iterator -> B-tree
+DB -> Iterator -> Index Iterator -> B-tree or ART
 ```
 
 普通写入链路如下：
@@ -119,7 +119,9 @@ CRC | record type | key size | value size | key | value
 |-- index/
 |   |-- index.go            索引接口和类型
 |   |-- btree.go            B-tree 索引实现
-|   `-- btree_test.go       B-tree 测试
+|   |-- art.go              ART 索引实现
+|   |-- btree_test.go       B-tree 测试
+|   `-- art_test.go         ART 测试
 `-- examples/
     `-- basic_operation.go  基础数据库操作示例
 ```
@@ -128,7 +130,7 @@ CRC | record type | key size | value size | key | value
 
 ### ListKeys
 
-`ListKeys` 返回当前索引中的所有 key。当前 B-tree 实现按 key 的字典序返回，已删除的 key 不会出现在结果中。
+`ListKeys` 返回当前索引中的所有 key。B-tree 和 ART 实现都按 key 的字典序返回，已删除的 key 不会出现在结果中。
 
 ```go
 for _, key := range db.ListKeys() {
@@ -175,6 +177,31 @@ for it.Valid() {
 ```
 
 对于正序迭代，`Seek(key)` 定位到第一个大于等于 `key` 的位置；对于逆序迭代，定位到当前遍历方向下第一个不大于 `key` 的位置。
+
+## 索引配置
+
+默认使用 B-tree。可以通过 `Options.IndexType` 切换为 ART：
+
+```go
+package main
+
+import (
+	bitcask "github.com/yifaaan/bitcask"
+	"github.com/yifaaan/bitcask/index"
+)
+
+func main() {
+	opts := bitcask.DefaultOptions
+	opts.DirPath = "./data"
+	opts.IndexType = index.ART
+
+	db, err := bitcask.Open(opts)
+	if err != nil {
+		panic(err)
+	}
+	defer db.Close()
+}
+```
 
 ## 环境要求
 
