@@ -487,6 +487,23 @@ func (db *DB) Sync() error {
 	return db.activeFile.Sync()
 }
 
+// Backup copies the database directory while blocking concurrent database writes.
+func (db *DB) Backup(dstDir string, excludeDataFiles []string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if db.activeFile != nil {
+		if err := db.activeFile.Sync(); err != nil {
+			return err
+		}
+	}
+
+	exclusions := make([]string, 0, len(excludeDataFiles)+1)
+	exclusions = append(exclusions, excludeDataFiles...)
+	exclusions = append(exclusions, FILE_LOCK_NAME)
+	return utils.Backup(db.options.DirPath, dstDir, exclusions)
+}
+
 func (db *DB) Stat() *Stat {
 	db.mu.RLock()
 	defer db.mu.RUnlock()

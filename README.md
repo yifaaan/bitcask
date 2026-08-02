@@ -9,6 +9,7 @@
 - [特性](#特性)
 - [快速开始](#快速开始)
 - [核心 API](#核心-api)
+- [目录备份](#目录备份)
 - [Merge 与恢复](#merge-与恢复)
 - [实现概览](#实现概览)
 - [项目结构](#项目结构)
@@ -27,6 +28,7 @@
 | [x] | WriteBatch | 支持 Put/Delete 批量原子提交和重启恢复。 |
 | [x] | Merge | 清理失效记录、生成 hint 索引，并在下次打开数据库时应用结果。 |
 | [x] | Merge 前置检查 | 检查回收比例和可用磁盘空间，避免低收益或空间不足的合并。 |
+| [x] | 目录备份 | `utils.Backup` 和 `DB.Backup` 递归复制数据目录，并支持 glob 模式排除数据文件。 |
 | [x] | 遍历 API | 支持 `ListKeys`、`Fold`、正逆序迭代、前缀过滤和 `Seek`。 |
 | [x] | 运行统计 | `DB.Stat` 提供 key 数、数据文件数、可回收大小和目录大小。 |
 | [x] | 跨平台磁盘检查 | 当前为 Linux 和 Windows 提供可用磁盘空间实现。 |
@@ -185,6 +187,37 @@ if stat != nil {
 - `ReclaimableSize`：覆盖或删除后可由 Merge 回收的记录大小。
 - `DisSize`：数据目录当前占用的字节数。
 
+## 目录备份
+
+`utils.Backup` 将数据目录递归复制到目标目录，并保留目录结构。`excludeDataFiles` 使用 `filepath.Match` 模式匹配每个文件或目录的名称，例如 `*.data` 可以排除所有数据文件；目标目录不存在时会自动创建。
+
+```go
+import "github.com/yifaaan/bitcask/utils"
+
+err := utils.Backup(
+	"./data",
+	"./backup",
+	[]string{
+		"*.data",
+	},
+)
+if err != nil {
+	log.Fatal(err)
+}
+```
+
+上例会复制 `hint-index` 和其他未排除文件，但跳过所有 `.data` 文件。也可以直接通过 `DB.Backup` 调用：
+
+```go
+if err := db.Backup("./backup", []string{"*.data"}); err != nil {
+	log.Fatal(err)
+}
+```
+
+`DB.Backup` 会自动排除运行中的 `flock` 文件，并在复制前同步 active 数据文件；直接使用 `utils.Backup` 时，如果源数据库仍处于打开状态，需要由调用方自行排除 `flock` 或先关闭数据库。备份函数会返回遍历和模式匹配错误。
+
+`utils.Backup` 只负责文件级复制，不会获取 `DB` 的内部锁，也不提供数据库级快照。为了保证备份内容一致，建议在关闭数据库或由调用方暂停写入后执行备份。
+
 ## 配置
 
 默认配置定义在 `DefaultOptions`：
@@ -322,6 +355,8 @@ CRC | record type | key size | value size | key | value
 |-- options.go              数据库及批量写入配置
 |-- errors.go               包级错误定义
 |-- utils/
+|   |-- backup.go             数据目录备份
+|   |-- backup_test.go        备份和排除规则测试
 |   |-- file.go              目录大小统计
 |   |-- disk_linux.go        Linux 可用磁盘空间
 |   `-- disk_windows.go      Windows 可用磁盘空间
@@ -370,6 +405,7 @@ go test . -run '^TestDBMerge' -v
 ```powershell
 go test ./fio -run '^TestMMap' -v
 go test . -run '^TestDB(FileLock|MMapAtStart)' -v
+go test ./utils -run '^TestBackup' -v
 ```
 
 运行示例：
@@ -386,6 +422,7 @@ go run .\examples\basic_operation.go
 - 增加 Merge 拒绝分支、并发调用、删除 key、hint 恢复和数据完整性测试。
 - 增加 `DB.Stat`，记录 key 数、数据文件数、可回收数据大小和目录占用空间。
 - 增加 Linux/Windows 可用磁盘空间查询，并在测试中支持注入空间探针。
+- 增加 `utils.Backup`，支持递归备份数据目录和排除指定数据文件。
 - 补充 mmap 启动加载后切换标准文件 IO、文件锁和索引实现的测试覆盖。
 
 ### 2026-08-01
