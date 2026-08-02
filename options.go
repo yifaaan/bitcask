@@ -16,15 +16,19 @@ type Options struct {
 	IndexType    index.IndexType
 	BytesPerSync uint
 	MMapAtStart  bool // 启动时使用 mmap 加载数据文件
+
+	// 数据文件merge的阈值
+	DataFileMergeRatio float32
 }
 
 var DefaultOptions = Options{
-	DirPath:      os.TempDir(),
-	DataFileSize: 256 * 1024 * 1024, // 256MB
-	SyncWrite:    false,
-	IndexType:    index.BTREE,
-	BytesPerSync: 0,
-	MMapAtStart:  true,
+	DirPath:            os.TempDir(),
+	DataFileSize:       256 * 1024 * 1024, // 256MB
+	SyncWrite:          false,
+	IndexType:          index.BTREE,
+	BytesPerSync:       0,
+	MMapAtStart:        true,
+	DataFileMergeRatio: 0.5,
 }
 
 type IteratorOptions struct {

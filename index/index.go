@@ -16,11 +16,11 @@ const (
 
 type Indexer interface {
 	// 向索引中存储key对应的数据位置信息
-	Put(key []byte, pos *data.LogRecordPos) bool
+	Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos
 	// 根据key取出对应的数据位置信息
 	Get(key []byte) *data.LogRecordPos
 	// 根据key删除对应的数据位置信息
-	Delete(key []byte) bool
+	Delete(key []byte) (*data.LogRecordPos, bool)
 
 	// Iterator 索引迭代器
 	Iterator(reverse bool) Iterator

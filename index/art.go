@@ -22,21 +22,21 @@ func NewAdaptiveRadixTree() *AdaptiveRadixTree {
 }
 
 // Put stores the position associated with key, replacing any existing value.
-func (t *AdaptiveRadixTree) Put(key []byte, pos *data.LogRecordPos) bool {
+func (t *AdaptiveRadixTree) Put(key []byte, pos *data.LogRecordPos) *data.LogRecordPos {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if len(key) == 0 {
 		t.emptyPos = pos
 		t.hasEmptyKey = true
-		return true
+		return nil
 	}
 
-	if t.tree == nil {
-		t.tree = art.New()
+	old, _ := t.tree.Insert(key, pos)
+	if old == nil {
+		return nil
 	}
-	t.tree.Insert(key, pos)
-	return true
+	return old.(*data.LogRecordPos)
 }
 
 // Get returns the position associated with key, or nil when key is absent.
@@ -64,24 +64,23 @@ func (t *AdaptiveRadixTree) Get(key []byte) *data.LogRecordPos {
 }
 
 // Delete removes key and reports whether it was present.
-func (t *AdaptiveRadixTree) Delete(key []byte) bool {
+func (t *AdaptiveRadixTree) Delete(key []byte) (*data.LogRecordPos, bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
 	if len(key) == 0 {
 		if !t.hasEmptyKey {
-			return false
+			return nil, false
 		}
+		oldPos := t.emptyPos
 		t.emptyPos = nil
 		t.hasEmptyKey = false
-		return true
+		return oldPos, true
 	}
 
-	if t.tree == nil {
-		return false
-	}
-	_, deleted := t.tree.Delete(key)
-	return deleted
+	old, deleted := t.tree.Delete(key)
+	oldPos, _ := old.(*data.LogRecordPos)
+	return oldPos, deleted
 }
 
 func (t *AdaptiveRadixTree) Size() int {

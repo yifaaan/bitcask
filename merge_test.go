@@ -40,6 +40,53 @@ func countDataFiles(t *testing.T, dir string) int {
 	return n
 }
 
+func TestDBMergeRejectsWhenReclaimRatioUnreached(t *testing.T) {
+	db, _ := mergeTestDB(t)
+	defer closeTestDB(t, db)
+
+	if err := db.Put([]byte("key"), []byte("value")); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	db.options.DataFileMergeRatio = 1
+
+	err := db.Merge()
+	if !errors.Is(err, ErrMergeRatioUnreached) {
+		t.Fatalf("Merge() error = %v, want %v", err, ErrMergeRatioUnreached)
+	}
+	if db.isMerging {
+		t.Fatal("database should not remain in merging state after ratio rejection")
+	}
+}
+
+func TestDBMergeRejectsWhenDiskSpaceIsInsufficient(t *testing.T) {
+	db, _ := mergeTestDB(t)
+	defer closeTestDB(t, db)
+
+	if err := db.Put([]byte("key"), []byte("first")); err != nil {
+		t.Fatalf("first Put() error = %v", err)
+	}
+	if err := db.Put([]byte("key"), []byte("second")); err != nil {
+		t.Fatalf("second Put() error = %v", err)
+	}
+	db.options.DataFileMergeRatio = 0
+
+	originalAvailableDiskSizeFn := availableDiskSizeFn
+	availableDiskSizeFn = func() (uint64, error) {
+		return 0, nil
+	}
+	defer func() {
+		availableDiskSizeFn = originalAvailableDiskSizeFn
+	}()
+
+	err := db.Merge()
+	if !errors.Is(err, ErrNoEnoughSpaceForMerge) {
+		t.Fatalf("Merge() error = %v, want %v", err, ErrNoEnoughSpaceForMerge)
+	}
+	if db.isMerging {
+		t.Fatal("database should not remain in merging state after disk-space rejection")
+	}
+}
+
 func TestDBMergeCleansStaleRecords(t *testing.T) {
 	db, opts := mergeTestDB(t)
 
@@ -101,6 +148,7 @@ func TestDBMergeCleansStaleRecords(t *testing.T) {
 func TestDBMergeDropDeletedKeys(t *testing.T) {
 	db, _ := mergeTestDB(t)
 	defer closeTestDB(t, db)
+	db.options.DataFileMergeRatio = 0
 
 	// 写入几个 key，然后删除其中一些
 	for _, key := range []string{"keep-a", "keep-b", "gone-a", "gone-b"} {
@@ -136,6 +184,7 @@ func TestDBMergeReopenLoadsHintFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
+	db.options.DataFileMergeRatio = 0
 
 	// 制造多个数据文件 + 覆盖记录
 	// 注意：每个 key 的第 2 次 Put 会把数据写入"新轮转出的活跃文件"。merge 只处理
@@ -186,6 +235,7 @@ func TestDBMergeReopenLoadsHintFile(t *testing.T) {
 func TestDBMergeConcurrentCallRejected(t *testing.T) {
 	db, _ := mergeTestDB(t)
 	defer closeTestDB(t, db)
+	db.options.DataFileMergeRatio = 0
 
 	// 写入一些数据确保有可 merge 的内容
 	for i := range 20 {
@@ -241,6 +291,7 @@ func TestDBMergeEmptyDatabase(t *testing.T) {
 // TestDBMergeDataIntegrity verifies merge does not change user-visible data after reopen
 func TestDBMergeDataIntegrity(t *testing.T) {
 	db, opts := mergeTestDB(t)
+	db.options.DataFileMergeRatio = 0
 
 	// 使用不同长度的 key 和 value，覆盖索引重建 + hint 文件加载
 	expected := make(map[string]string)

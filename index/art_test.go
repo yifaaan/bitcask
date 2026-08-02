@@ -11,8 +11,8 @@ import (
 func TestAdaptiveRadixTree_PutGetDelete(t *testing.T) {
 	tree := NewAdaptiveRadixTree()
 
-	assert.True(t, tree.Put(nil, &data.LogRecordPos{Fid: 0, Offset: 1}))
-	assert.True(t, tree.Put([]byte("abc"), &data.LogRecordPos{Fid: 1, Offset: 2}))
+	assert.Nil(t, tree.Put(nil, &data.LogRecordPos{Fid: 0, Offset: 1}))
+	assert.Nil(t, tree.Put([]byte("abc"), &data.LogRecordPos{Fid: 1, Offset: 2}))
 	assert.Equal(t, 2, tree.Size())
 
 	pos := tree.Get(nil)
@@ -20,13 +20,19 @@ func TestAdaptiveRadixTree_PutGetDelete(t *testing.T) {
 	assert.Equal(t, uint32(0), pos.Fid)
 	assert.Equal(t, int64(1), pos.Offset)
 
-	assert.True(t, tree.Put([]byte("abc"), &data.LogRecordPos{Fid: 1, Offset: 3}))
+	old := tree.Put([]byte("abc"), &data.LogRecordPos{Fid: 1, Offset: 3})
+	assert.NotNil(t, old)
+	assert.Equal(t, int64(2), old.Offset)
 	pos = tree.Get([]byte("abc"))
 	require.NotNil(t, pos)
 	assert.Equal(t, int64(3), pos.Offset)
 
-	assert.True(t, tree.Delete(nil))
-	assert.False(t, tree.Delete(nil))
+	old, deleted := tree.Delete(nil)
+	assert.True(t, deleted)
+	assert.Equal(t, int64(1), old.Offset)
+	old, deleted = tree.Delete(nil)
+	assert.False(t, deleted)
+	assert.Nil(t, old)
 	assert.Nil(t, tree.Get(nil))
 	assert.Equal(t, 1, tree.Size())
 }

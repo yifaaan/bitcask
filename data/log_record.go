@@ -25,6 +25,8 @@ type LogRecordPos struct {
 	Fid uint32
 	// file offset
 	Offset int64
+	// 数据在磁盘上的大小
+	Size uint32
 }
 
 // LogRecord 写入到数据文件的记录，追加写入
@@ -112,10 +114,11 @@ type TransactionRecord struct {
 
 // EncodeLogRecordPos 对 pos 编码，用于写入 hint 索引文件
 func EncodeLogRecordPos(pos *LogRecordPos) []byte {
-	buf := make([]byte, binary.MaxVarintLen32+binary.MaxVarintLen64)
+	buf := make([]byte, binary.MaxVarintLen32*2+binary.MaxVarintLen64)
 	var idx = 0
 	idx += binary.PutVarint(buf[idx:], int64(pos.Fid))
 	idx += binary.PutVarint(buf[idx:], int64(pos.Offset))
+	idx += binary.PutVarint(buf[idx:], int64(pos.Size))
 	return buf[:idx]
 }
 
@@ -123,9 +126,12 @@ func DecodeLogRecordPos(buf []byte) *LogRecordPos {
 	var idx = 0
 	fileId, n := binary.Varint(buf[idx:])
 	idx += n
-	offset, _ := binary.Varint(buf[idx:])
+	offset, n := binary.Varint(buf[idx:])
+	idx += n
+	size, _ := binary.Varint(buf[idx:])
 	return &LogRecordPos{
 		Fid:    uint32(fileId),
 		Offset: offset,
+		Size:   uint32(size),
 	}
 }

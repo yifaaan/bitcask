@@ -11,4 +11,6 @@ var (
 	ErrExceedMaxBatchNum     = errors.New("exceed the max batch num")
 	ErrMergeIsInPrograss     = errors.New("merge is in prograss")
 	ErrDatabaseIsUsing       = errors.New("the database is used")
+	ErrMergeRatioUnreached   = errors.New("the merge ratio do not reach the ratio")
+	ErrNoEnoughSpaceForMerge = errors.New("no enough space for merge")
 )

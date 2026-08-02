@@ -10,12 +10,15 @@ import (
 	"strconv"
 
 	"github.com/yifaaan/bitcask/data"
+	"github.com/yifaaan/bitcask/utils"
 )
 
 const (
 	MERGE_DIR_NAME     = "-merge"
 	MERGE_FINISHED_KEY = "merge.finished"
 )
+
+var availableDiskSizeFn = utils.AvailableDiskSize
 
 // Merge 清理无效数据，生成 hint 索引文件
 func (db *DB) Merge() error {
@@ -27,6 +30,28 @@ func (db *DB) Merge() error {
 	if db.isMerging {
 		db.mu.Unlock()
 		return ErrMergeIsInPrograss
+	}
+
+	// 查看可 merge 的数据量是否达到阈值
+	dirSize, err := utils.DirSize(db.options.DirPath)
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
+	if float32(db.reclaimSize)/float32(dirSize) < db.options.DataFileMergeRatio {
+		db.mu.Unlock()
+		return ErrMergeRatioUnreached
+	}
+
+	// 查看剩余空间能否容纳 merge 之后的数据量
+	availableDiskSize, err := availableDiskSizeFn()
+	if err != nil {
+		db.mu.Unlock()
+		return err
+	}
+	if uint64(dirSize-db.reclaimSize) >= availableDiskSize {
+		db.mu.Unlock()
+		return ErrNoEnoughSpaceForMerge
 	}
 
 	db.isMerging = true
