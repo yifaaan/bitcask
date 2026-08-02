@@ -13,7 +13,8 @@ type Options struct {
 
 	SyncWrite bool // 每次写入都持久化？
 
-	IndexType index.IndexType
+	IndexType    index.IndexType
+	BytesPerSync uint
 }
 
 var DefaultOptions = Options{
@@ -21,6 +22,7 @@ var DefaultOptions = Options{
 	DataFileSize: 256 * 1024 * 1024, // 256MB
 	SyncWrite:    false,
 	IndexType:    index.BTREE,
+	BytesPerSync: 0,
 }
 
 type IteratorOptions struct {

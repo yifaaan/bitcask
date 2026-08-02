@@ -30,6 +30,7 @@ type DB struct {
 	seqNo      atomic.Uint64 // 事务序列号，全局递增
 	isMerging  bool
 	fileLock   *flock.Flock
+	bytesWrite uint // 累计写入了多少字节
 }
 
 func Open(options Options) (*DB, error) {
@@ -305,10 +306,17 @@ func (db *DB) appendLogRecord(lr *data.LogRecord) (*data.LogRecordPos, error) {
 		return nil, err
 	}
 
-	if db.options.SyncWrite {
+	db.bytesWrite += uint(len)
+
+	var needSync = db.options.SyncWrite
+	if !needSync && db.bytesWrite >= db.options.BytesPerSync {
+		needSync = true
+	}
+	if needSync {
 		if err := db.activeFile.Sync(); err != nil {
 			return nil, err
 		}
+		db.bytesWrite = 0
 	}
 
 	return &data.LogRecordPos{Fid: db.activeFile.FileId, Offset: writeOff}, nil
