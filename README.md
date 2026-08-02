@@ -1,146 +1,127 @@
 # Bitcask
 
-Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加写数据文件和
-内存索引，索引记录每个 key 最新数据在磁盘中的位置。
+> 一个使用 Go 编写的嵌入式、追加写键值存储。
+>
+> 数据顺序写入磁盘，内存索引只保存每个 key 的最新位置，适合学习日志结构存储、崩溃恢复和索引实现。
 
-## 当前进度
+## 目录
 
-项目仍在持续开发中。当前 `main` 分支已经具备可工作的追加写存储流程、B-tree
-和 ART 内存索引、数据库层测试以及批量原子写入（WriteBatch）支持。
+- [特性](#特性)
+- [快速开始](#快速开始)
+- [核心 API](#核心-api)
+- [Merge 与恢复](#merge-与恢复)
+- [实现概览](#实现概览)
+- [项目结构](#项目结构)
+- [测试与开发](#测试与开发)
+- [更新日志](#更新日志)
 
-| 状态 | 模块或功能 | 当前情况 |
+## 特性
+
+| 状态 | 能力 | 说明 |
 | --- | --- | --- |
-| [x] 已完成 | Go 模块和基础包结构 | 已建立项目模块及 `data`、`fio`、`index` 包。 |
-| [x] 已完成 | 文件 IO | `fio.FileIO` 支持追加写、按偏移读取、同步、关闭和获取文件大小；`fio.MMap` 支持启动阶段的只读内存映射。 |
-| [x] 已完成 | 数据文件 | `data.DataFile` 支持数据文件命名、写偏移维护和日志记录读取。 |
-| [x] 已完成 | 日志记录 | 已实现记录编码、解码、varint 长度和 CRC32 校验。 |
-| [x] 已完成 | B-tree 和 ART 索引 | 支持基于 `github.com/google/btree` 的 B-tree 和基于 `github.com/plar/go-adaptive-radix-tree/v2` 的 ART，均提供增删改查、快照迭代和 `Seek`。 |
-| [x] 已完成 | 数据库启动和恢复 | 支持创建数据目录、扫描数据文件、使用 mmap 加载并重建内存索引，启动完成后切回标准文件 IO。 |
-| [x] 已完成 | 基础键值操作 | `DB.Put`、`DB.Get` 和 `DB.Delete` 已支持 key 校验、删除标记、文件轮换和最新值恢复。 |
-| [x] 已完成 | 遍历和批量读取 | 已支持 `DB.NewIterator`、`DB.ListKeys` 和 `DB.Fold`，支持正逆序、前缀过滤和 `Seek`。 |
-| [x] 已完成 | 单元测试 | 已覆盖文件 IO、mmap 启动切换、日志记录、数据库操作、重启恢复、数据文件轮换、B-tree/ART 索引和遍历 API。 |
-| [x] 已完成 | 基础示例 | `examples/` 下提供基础数据库操作示例。 |
-| [x] 已完成 | WriteBatch 原子写 | `WriteBatch` 支持批量原子写入（Put/Delete），通过序列号保证事务性，恢复时正确重建索引。 |
-| [x] 已完成 | 数据库生命周期 | `DB.Close` 已支持关闭 active 文件和旧数据文件。 |
-| [ ] 进行中 | 可靠性和并发测试 | 崩溃模拟、损坏记录恢复和更完整的并发测试仍待补充。 |
-| [ ] 未开始 | 命令行工具和服务端 | 当前尚未提供 CLI 或服务端程序。 |
+| [x] | 追加写存储 | 数据以 log record 形式顺序追加，避免随机更新数据文件。 |
+| [x] | 数据恢复 | 启动时扫描数据文件并重建内存索引，支持最新值恢复。 |
+| [x] | B-tree / ART | 可通过 `Options.IndexType` 选择 B-tree 或 ART 内存索引。 |
+| [x] | mmap 启动加载 | 已有数据文件启动时可使用 mmap 读取，索引恢复完成后切换回标准文件 IO。 |
+| [x] | 文件锁 | 同一个数据目录同时只允许一个 `DB` 实例打开。 |
+| [x] | WriteBatch | 支持 Put/Delete 批量原子提交和重启恢复。 |
+| [x] | Merge | 清理失效记录、生成 hint 索引，并在下次打开数据库时应用结果。 |
+| [x] | Merge 前置检查 | 检查回收比例和可用磁盘空间，避免低收益或空间不足的合并。 |
+| [x] | 遍历 API | 支持 `ListKeys`、`Fold`、正逆序迭代、前缀过滤和 `Seek`。 |
+| [x] | 运行统计 | `DB.Stat` 提供 key 数、数据文件数、可回收大小和目录大小。 |
+| [x] | 跨平台磁盘检查 | 当前为 Linux 和 Windows 提供可用磁盘空间实现。 |
 
-## 后续计划
+项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，暂不提供 CLI、服务端或 Redis 协议兼容层。
 
-以下计划按照当前迭代顺序推进：
+## 快速开始
 
-| 状态 | 阶段 | 计划 |
-| --- | --- | --- |
-| [x] | 1 | 迭代器支持 |
-| [x] | 2 | WriteBatch 原子写 |
-| [ ] | 3 | Merge 数据清理 |
-| [ ] | 4 | 内存索引优化 |
-| [ ] | 5 | 文件 IO 优化 |
-| [ ] | 6 | 数据 Merge 优化 |
-| [ ] | 7 | 数据备份 |
-| [ ] | 8 | HTTP 接口 |
-| [ ] | 9 | 基准测试 |
-| [ ] | 10 | String 结构支持 |
-| [ ] | 11 | Hash 结构支持 |
-| [ ] | 12 | Set 结构支持 |
-| [ ] | 13 | List 结构支持 |
-| [ ] | 14 | SortedSet 结构支持 |
-| [ ] | 15 | Redis 协议兼容 |
+```go
+package main
 
-## 架构
+import (
+	"fmt"
+	"log"
 
-当前写入链路如下：
+	bitcask "github.com/yifaaan/bitcask"
+)
 
-```text
-DB -> DataFile -> IOManager -> FileIO -> os.File
+func main() {
+	opts := bitcask.DefaultOptions
+	opts.DirPath = "./data"
+
+	db, err := bitcask.Open(opts)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := db.Put([]byte("name"), []byte("bitcask")); err != nil {
+		log.Fatal(err)
+	}
+
+	value, err := db.Get([]byte("name"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("name=%s\n", value)
+}
 ```
 
-内存索引保存 key 对应的最新数据位置：
+运行示例：
 
-```text
-key -> { file id, file offset }
+```powershell
+go run .\examples\basic_operation.go
 ```
 
-普通读取和遍历路径如下：
+## 核心 API
 
-```text
-DB -> Iterator -> Index Iterator -> B-tree or ART
+### 基础读写
+
+```go
+if err := db.Put([]byte("user:1"), []byte("Alice")); err != nil {
+	log.Fatal(err)
+}
+
+value, err := db.Get([]byte("user:1"))
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(string(value))
+
+if err := db.Delete([]byte("user:1")); err != nil {
+	log.Fatal(err)
+}
 ```
 
-启动恢复阶段的文件 IO 路径如下。当 `MMapAtStart` 为 `true` 时，已有数据文件
-先使用 mmap 读取，索引恢复完成后切换为标准 `FileIO`；新建 active 文件始终使用
-标准 `FileIO`，因为 mmap 只提供只读访问。
+空 key 会返回 `ErrKeyIsEmpty`，读取不存在的 key 会返回 `ErrKeyNotFound`。
 
-```text
-DB.Open -> MMap -> load index -> FileIO
+### WriteBatch
+
+`WriteBatch` 将多条 Put/Delete 记录写入同一个事务序列，并以结束记录标识提交完成。恢复时，未看到结束记录的批次会被丢弃。
+
+```go
+batch := db.NewWriteBatch(bitcask.WriteBatchOptions{
+	MaxBatchNum: 100,
+	SyncWrite:   true,
+})
+
+if err := batch.Put([]byte("user:1"), []byte("Alice")); err != nil {
+	log.Fatal(err)
+}
+if err := batch.Put([]byte("user:2"), []byte("Bob")); err != nil {
+	log.Fatal(err)
+}
+if err := batch.Delete([]byte("user:old")); err != nil {
+	log.Fatal(err)
+}
+if err := batch.Commit(); err != nil {
+	log.Fatal(err)
+}
 ```
 
-普通写入链路如下：
+### 遍历
 
-```text
-DB.Put -> appendLogRecordWithLock -> DataFile -> IOManager -> FileIO -> os.File
-```
-
-`WriteBatch` 提交时沿用同样的写入链路，但其记录的 key 会附带一个全局递增的
-事务序列号，并以一条 `LOG_RECORD_TXN_FINISH` 记录标识该事务结束。
-
-日志记录的格式为编码后的 header 加 key 和 value：
-
-```text
-CRC | record type | key size | value size | key | value
-```
-
-其中 key size 和 value size 使用 varint 编码。删除操作会追加一条删除记录，
-数据库恢复时根据这条记录从内存索引中移除对应 key。
-
-`WriteBatch` 中的记录类型：
-
-- `LOG_RECORD_NORMAL`            普通（写入）记录
-- `LOG_RECORD_DELETED`           删除记录
-- `LOG_RECORD_TXN_FINISH`        事务结束标记
-
-启动恢复时，附有事务序列号的记录会被暂存，当读到对应序列号的 `LOG_RECORD_TXN_FINISH`
-记录时整批更新到内存索引；若程序在事务中途崩溃，未结束的事务记录会被丢弃，
-从而保证批量写入的原子性。
-
-## 目录结构
-
-```text
-.
-|-- db.go                   数据库打开、恢复、键值操作和遍历 API
-|-- db_test.go              数据库集成测试
-|-- iterator.go             面向用户的迭代器
-|-- iterator_test.go        迭代器测试
-|-- batch.go                批量原子写
-|-- batch_test.go           WriteBatch 测试
-|-- options.go              数据库、迭代器和 WriteBatch 配置
-|-- errors.go               包级错误定义
-|-- data/
-|   |-- data_file.go        追加写数据文件
-|   |-- data_file_test.go   数据文件测试
-|   |-- log_record.go       日志记录类型和编解码
-|   `-- log_record_test.go  日志记录测试
-|-- fio/
-|   |-- file_io.go          基于 os.File 的 IO 实现
-|   |-- file_io_test.go     文件 IO 测试
-|   |-- mmap.go              只读内存映射 IO 实现
-|   |-- mmap_test.go         mmap 测试
-|   `-- io_manager.go        IO 抽象接口和类型
-|-- index/
-|   |-- index.go            索引接口和类型
-|   |-- btree.go            B-tree 索引实现
-|   |-- art.go              ART 索引实现
-|   |-- btree_test.go       B-tree 测试
-|   `-- art_test.go         ART 测试
-`-- examples/
-    `-- basic_operation.go  基础数据库操作示例
-```
-
-## 遍历 API
-
-### ListKeys
-
-`ListKeys` 返回当前索引中的所有 key。B-tree 和 ART 实现都按 key 的字典序返回，已删除的 key 不会出现在结果中。
+`ListKeys` 返回当前索引中的 key，结果按字典序排列：
 
 ```go
 for _, key := range db.ListKeys() {
@@ -148,9 +129,7 @@ for _, key := range db.ListKeys() {
 }
 ```
 
-### Fold
-
-`Fold` 按正序遍历所有 key 和最新 value。回调返回 `false` 时停止遍历；读取数据失败时返回错误。
+`Fold` 按正序读取 key 和 value。回调在数据库读锁期间执行，不要在回调中调用 `Put`、`Delete` 或 `Close`：
 
 ```go
 err := db.Fold(func(key, value []byte) bool {
@@ -162,11 +141,7 @@ if err != nil {
 }
 ```
 
-回调在数据库读锁期间执行，回调中不要调用 `Put`、`Delete` 或 `Close` 等会修改或关闭数据库的方法。
-
-### Iterator
-
-`NewIterator` 支持正序、逆序和前缀过滤。调用 `Rewind` 或 `Seek` 定位后，通过 `Valid`、`Key`、`Value` 和 `Next` 读取数据。
+`NewIterator` 支持正序、逆序、前缀过滤和定位：
 
 ```go
 it := db.NewIterator(bitcask.IteratorOptions{
@@ -186,79 +161,245 @@ for it.Valid() {
 }
 ```
 
-对于正序迭代，`Seek(key)` 定位到第一个大于等于 `key` 的位置；对于逆序迭代，定位到当前遍历方向下第一个不大于 `key` 的位置。
+正序迭代的 `Seek` 定位到第一个大于等于目标 key 的位置；逆序迭代定位到当前方向下第一个不大于目标 key 的位置。
 
-## 索引配置
-
-默认使用 B-tree。可以通过 `Options.IndexType` 切换为 ART：
+### 统计信息
 
 ```go
-package main
-
-import (
-	bitcask "github.com/yifaaan/bitcask"
-	"github.com/yifaaan/bitcask/index"
-)
-
-func main() {
-	opts := bitcask.DefaultOptions
-	opts.DirPath = "./data"
-	opts.IndexType = index.ART
-
-	db, err := bitcask.Open(opts)
-	if err != nil {
-		panic(err)
-	}
-	defer db.Close()
+stat := db.Stat()
+if stat != nil {
+	fmt.Printf(
+		"keys=%d files=%d reclaimable=%dB dir=%dB\n",
+		stat.KeyNum,
+		stat.DataFileNum,
+		stat.ReclaimableSize,
+		stat.DisSize,
+	)
 }
 ```
 
-## 启动 IO 配置
+字段含义：
 
-默认启用启动阶段 mmap：
+- `KeyNum`：当前内存索引中的 key 数量。
+- `DataFileNum`：当前打开的数据文件数量。
+- `ReclaimableSize`：覆盖或删除后可由 Merge 回收的记录大小。
+- `DisSize`：数据目录当前占用的字节数。
+
+## 配置
+
+默认配置定义在 `DefaultOptions`：
+
+| 配置 | 默认值 | 说明 |
+| --- | --- | --- |
+| `DirPath` | `os.TempDir()` | 数据目录。 |
+| `DataFileSize` | `256 MiB` | 单个数据文件达到该大小后轮换。 |
+| `SyncWrite` | `false` | 是否在每次普通写入后同步数据。 |
+| `IndexType` | `index.BTREE` | 内存索引类型，也可以设置为 `index.ART`。 |
+| `BytesPerSync` | `0` | 累计写入达到该字节数后触发同步检查。 |
+| `MMapAtStart` | `true` | 启动恢复阶段是否使用 mmap 读取已有数据文件。 |
+| `DataFileMergeRatio` | `0.5` | 允许 Merge 的最低失效数据比例。 |
+
+### 选择 ART 索引
 
 ```go
 opts := bitcask.DefaultOptions
-opts.MMapAtStart = true
+opts.DirPath = "./data"
+opts.IndexType = index.ART
+
+db, err := bitcask.Open(opts)
+if err != nil {
+	log.Fatal(err)
+}
+defer db.Close()
 ```
 
-打开已有数据库时，Bitcask 使用 mmap 读取数据文件并重建索引；`Open` 返回前会将
-所有数据文件重新打开为标准 `FileIO`，因此后续写入、同步和关闭行为保持不变。
-如需禁用启动阶段 mmap，可设置：
+### mmap 启动加载
 
-```go
-opts.MMapAtStart = false
+当 `MMapAtStart` 为 `true` 时，打开已有数据库的流程是：
+
+```text
+open data files -> mmap read -> load hint/index -> rebuild index -> standard FileIO
 ```
 
-## 环境要求
+mmap 只用于启动阶段的只读加载。`Open` 返回前，数据文件会切换回标准 `FileIO`，因此后续写入、同步和关闭仍使用普通文件 IO。设置 `MMapAtStart = false` 可以关闭这项优化。
 
-- Go 1.25.0 或更高版本
+## Merge 与恢复
 
-## 运行测试
+`DB.Merge` 会扫描旧数据文件，只保留当前索引仍指向的有效记录，并生成 hint 索引。为了控制收益和磁盘占用，Merge 开始前会检查：
+
+1. `reclaimSize / dirSize >= DataFileMergeRatio`。
+2. 当前可用磁盘空间大于预计保留数据大小。
+
+检查失败时分别返回：
+
+- `ErrMergeRatioUnreached`：失效数据比例没有达到阈值。
+- `ErrNoEnoughSpaceForMerge`：可用空间不足以容纳合并后的数据。
+- `ErrMergeIsInPrograss`：已有另一个 Merge 正在执行。
+
+Merge 的结果先写入数据目录旁的临时目录。完成标记写入后，下次 `Open` 会：
+
+1. 检测 `merge-finished`。
+2. 删除已经参与 Merge 的旧数据文件。
+3. 将新数据文件和 `hint-index` 移回正式数据目录。
+4. 使用 hint 索引和未参与 Merge 的活跃文件恢复数据。
+5. 清理临时 Merge 目录。
+
+典型目录布局：
+
+```text
+./data/
+|-- 000000000.data
+|-- 000000001.data
+|-- hint-index
+|-- merge-finished
+`-- flock
+
+./data-merge/
+|-- 000000000.data
+|-- hint-index
+`-- merge-finished
+```
+
+磁盘空间检测目前提供 Linux 和 Windows 实现，使用当前工作目录所在文件系统的可用空间进行判断。
+
+## 实现概览
+
+### 写入与读取路径
+
+```text
+DB.Put
+  -> appendLogRecordWithLock
+  -> DataFile
+  -> IOManager
+  -> FileIO
+  -> os.File
+```
+
+内存索引只保存最新位置：
+
+```text
+key -> { file id, file offset, record size }
+```
+
+读取和遍历路径：
+
+```text
+DB -> Indexer -> B-tree / ART -> DataFile.ReadLogRecord
+```
+
+### Log record 格式
+
+每条记录由 CRC、类型、长度字段、key 和 value 组成：
+
+```text
+CRC | record type | key size | value size | key | value
+```
+
+`key size` 和 `value size` 使用 varint 编码。当前记录类型包括：
+
+| 类型 | 含义 |
+| --- | --- |
+| `LOG_RECORD_NORMAL` | 普通写入记录。 |
+| `LOG_RECORD_DELETED` | 删除标记记录。 |
+| `LOG_RECORD_TXN_FINISH` | WriteBatch 事务结束记录。 |
+
+### 文件锁
+
+打开数据库时会在数据目录创建并持有 `flock`。同一个目录被另一个 `DB` 实例占用时，`Open` 返回 `ErrDatabaseIsUsing`。调用 `DB.Close` 后释放锁，其他进程才可以重新打开该目录。
+
+## 项目结构
+
+```text
+.
+|-- db.go                   数据库打开、恢复、键值操作和统计
+|-- db_test.go              数据库、文件锁和 mmap 启动测试
+|-- iterator.go             用户侧迭代器
+|-- iterator_test.go        迭代器测试
+|-- batch.go                WriteBatch 实现
+|-- batch_test.go           WriteBatch 测试
+|-- merge.go                Merge、hint 和恢复逻辑
+|-- merge_test.go           Merge 场景和前置检查测试
+|-- options.go              数据库及批量写入配置
+|-- errors.go               包级错误定义
+|-- utils/
+|   |-- file.go              目录大小统计
+|   |-- disk_linux.go        Linux 可用磁盘空间
+|   `-- disk_windows.go      Windows 可用磁盘空间
+|-- data/
+|   |-- data_file.go         数据文件和 hint 文件
+|   |-- log_record.go        日志记录编解码
+|   `-- *_test.go            数据文件测试
+|-- fio/
+|   |-- file_io.go           标准文件 IO
+|   |-- mmap.go              只读 mmap IO
+|   `-- *_test.go            IO 测试
+|-- index/
+|   |-- btree.go             B-tree 索引
+|   |-- art.go               ART 索引
+|   `-- *_test.go            索引测试
+|-- examples/
+|   `-- basic_operation.go   基础操作示例
+|-- go.mod
+`-- README.md
+```
+
+## 测试与开发
+
+环境要求：Go 1.25.0 或更高版本。
 
 运行全部测试：
 
 ```powershell
-go test ./...
+go test ./... -count=1
 ```
 
-运行某个数据库测试：
+运行静态检查：
 
 ```powershell
-go test . -run '^TestDBPutGetDelete$' -v
+go vet ./...
 ```
 
-运行遍历相关测试：
+运行 Merge 测试：
 
 ```powershell
-go test ./... -run 'Test(DBListKeys|DBFold|.*Iterator)' -v
+go test . -run '^TestDBMerge' -v
 ```
 
-## 运行示例
+运行 mmap 和文件锁测试：
+
+```powershell
+go test ./fio -run '^TestMMap' -v
+go test . -run '^TestDB(FileLock|MMapAtStart)' -v
+```
+
+运行示例：
 
 ```powershell
 go run .\examples\basic_operation.go
 ```
+
+## 更新日志
+
+### 2026-08-02
+
+- 完善 Merge 前置检查：回收比例不足时返回 `ErrMergeRatioUnreached`，可用空间不足时返回 `ErrNoEnoughSpaceForMerge`。
+- 增加 Merge 拒绝分支、并发调用、删除 key、hint 恢复和数据完整性测试。
+- 增加 `DB.Stat`，记录 key 数、数据文件数、可回收数据大小和目录占用空间。
+- 增加 Linux/Windows 可用磁盘空间查询，并在测试中支持注入空间探针。
+- 补充 mmap 启动加载后切换标准文件 IO、文件锁和索引实现的测试覆盖。
+
+### 2026-08-01
+
+- 支持启动阶段使用 mmap 读取已有数据文件。
+- 启动恢复完成后将数据文件重置为标准文件 IO，保证后续写入流程可用。
+- 补充文件 IO、mmap、数据文件轮换和数据库恢复测试。
+
+## 后续计划
+
+- 增加崩溃模拟、损坏记录和边界恢复测试。
+- 完善 Merge 失败恢复、临时目录清理和大数据量压力测试。
+- 增加基准测试和数据备份能力。
+- 评估 CLI、HTTP API 以及更多 Redis 数据结构支持。
 
 ## 许可证
 
