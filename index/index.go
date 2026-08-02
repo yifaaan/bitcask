@@ -44,7 +44,7 @@ func NewIndexer(t IndexType) Indexer {
 	case BTREE:
 		return NewBTree()
 	case ART:
-		return nil
+		return NewAdaptiveRadixTree()
 	}
 	return nil
 }
