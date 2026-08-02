@@ -11,14 +11,14 @@ Bitcask 是一个使用 Go 编写的嵌入式键值存储。项目采用追加�
 | 状态 | 模块或功能 | 当前情况 |
 | --- | --- | --- |
 | [x] 已完成 | Go 模块和基础包结构 | 已建立项目模块及 `data`、`fio`、`index` 包。 |
-| [x] 已完成 | 文件 IO | `fio.FileIO` 支持追加写、按偏移读取、同步、关闭和获取文件大小。 |
+| [x] 已完成 | 文件 IO | `fio.FileIO` 支持追加写、按偏移读取、同步、关闭和获取文件大小；`fio.MMap` 支持启动阶段的只读内存映射。 |
 | [x] 已完成 | 数据文件 | `data.DataFile` 支持数据文件命名、写偏移维护和日志记录读取。 |
 | [x] 已完成 | 日志记录 | 已实现记录编码、解码、varint 长度和 CRC32 校验。 |
 | [x] 已完成 | B-tree 和 ART 索引 | 支持基于 `github.com/google/btree` 的 B-tree 和基于 `github.com/plar/go-adaptive-radix-tree/v2` 的 ART，均提供增删改查、快照迭代和 `Seek`。 |
-| [x] 已完成 | 数据库启动和恢复 | 支持创建数据目录、扫描数据文件、选择 active 文件和重建内存索引。 |
+| [x] 已完成 | 数据库启动和恢复 | 支持创建数据目录、扫描数据文件、使用 mmap 加载并重建内存索引，启动完成后切回标准文件 IO。 |
 | [x] 已完成 | 基础键值操作 | `DB.Put`、`DB.Get` 和 `DB.Delete` 已支持 key 校验、删除标记、文件轮换和最新值恢复。 |
 | [x] 已完成 | 遍历和批量读取 | 已支持 `DB.NewIterator`、`DB.ListKeys` 和 `DB.Fold`，支持正逆序、前缀过滤和 `Seek`。 |
-| [x] 已完成 | 单元测试 | 已覆盖文件 IO、日志记录、数据库操作、重启恢复、数据文件轮换、B-tree/ART 索引和遍历 API。 |
+| [x] 已完成 | 单元测试 | 已覆盖文件 IO、mmap 启动切换、日志记录、数据库操作、重启恢复、数据文件轮换、B-tree/ART 索引和遍历 API。 |
 | [x] 已完成 | 基础示例 | `examples/` 下提供基础数据库操作示例。 |
 | [x] 已完成 | WriteBatch 原子写 | `WriteBatch` 支持批量原子写入（Put/Delete），通过序列号保证事务性，恢复时正确重建索引。 |
 | [x] 已完成 | 数据库生命周期 | `DB.Close` 已支持关闭 active 文件和旧数据文件。 |
@@ -65,6 +65,14 @@ key -> { file id, file offset }
 
 ```text
 DB -> Iterator -> Index Iterator -> B-tree or ART
+```
+
+启动恢复阶段的文件 IO 路径如下。当 `MMapAtStart` 为 `true` 时，已有数据文件
+先使用 mmap 读取，索引恢复完成后切换为标准 `FileIO`；新建 active 文件始终使用
+标准 `FileIO`，因为 mmap 只提供只读访问。
+
+```text
+DB.Open -> MMap -> load index -> FileIO
 ```
 
 普通写入链路如下：
@@ -115,7 +123,9 @@ CRC | record type | key size | value size | key | value
 |-- fio/
 |   |-- file_io.go          基于 os.File 的 IO 实现
 |   |-- file_io_test.go     文件 IO 测试
-|   `-- io_manager.go       IO 抽象接口
+|   |-- mmap.go              只读内存映射 IO 实现
+|   |-- mmap_test.go         mmap 测试
+|   `-- io_manager.go        IO 抽象接口和类型
 |-- index/
 |   |-- index.go            索引接口和类型
 |   |-- btree.go            B-tree 索引实现
@@ -203,9 +213,26 @@ func main() {
 }
 ```
 
+## 启动 IO 配置
+
+默认启用启动阶段 mmap：
+
+```go
+opts := bitcask.DefaultOptions
+opts.MMapAtStart = true
+```
+
+打开已有数据库时，Bitcask 使用 mmap 读取数据文件并重建索引；`Open` 返回前会将
+所有数据文件重新打开为标准 `FileIO`，因此后续写入、同步和关闭行为保持不变。
+如需禁用启动阶段 mmap，可设置：
+
+```go
+opts.MMapAtStart = false
+```
+
 ## 环境要求
 
-- Go 1.24.5 或更高版本
+- Go 1.25.0 或更高版本
 
 ## 运行测试
 
