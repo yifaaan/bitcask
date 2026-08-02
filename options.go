@@ -15,6 +15,7 @@ type Options struct {
 
 	IndexType    index.IndexType
 	BytesPerSync uint
+	MMapAtStart  bool // 启动时使用 mmap 加载数据文件
 }
 
 var DefaultOptions = Options{
@@ -23,6 +24,7 @@ var DefaultOptions = Options{
 	SyncWrite:    false,
 	IndexType:    index.BTREE,
 	BytesPerSync: 0,
+	MMapAtStart:  true,
 }
 
 type IteratorOptions struct {

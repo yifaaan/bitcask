@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yifaaan/bitcask/data"
+	"github.com/yifaaan/bitcask/fio"
 )
 
 func testOptions(t *testing.T) Options {
@@ -112,6 +115,84 @@ func TestDBFileLock(t *testing.T) {
 	db, err = Open(opts)
 	if err != nil {
 		t.Fatalf("Open() after Close() error = %v", err)
+	}
+}
+
+func TestDBMMapAtStartResetsToStandardFileIO(t *testing.T) {
+	opts := testOptions(t)
+	opts.MMapAtStart = false
+	opts.DataFileSize = 32
+
+	db, err := Open(opts)
+	if err != nil {
+		t.Fatalf("initial Open() error = %v", err)
+	}
+	for i := range 6 {
+		key := fmt.Sprintf("key-%d", i)
+		if err := db.Put([]byte(key), []byte(strings.Repeat("value", 4))); err != nil {
+			t.Fatalf("Put(%q) error = %v", key, err)
+		}
+	}
+	if len(db.olderFiles) == 0 {
+		t.Fatal("expected multiple data files for mmap startup test")
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("initial Close() error = %v", err)
+	}
+
+	opts.MMapAtStart = true
+	opened, err := Open(opts)
+	if err != nil {
+		t.Fatalf("Open() with mmap startup error = %v", err)
+	}
+	if _, ok := opened.activeFile.IOManager.(*fio.FileIO); !ok {
+		t.Fatalf("Open() active IO manager = %T, want *fio.FileIO", opened.activeFile.IOManager)
+	}
+	for fid, df := range opened.olderFiles {
+		if _, ok := df.IOManager.(*fio.FileIO); !ok {
+			t.Fatalf("Open() older file %d IO manager = %T, want *fio.FileIO", fid, df.IOManager)
+		}
+	}
+	if err := opened.Close(); err != nil {
+		t.Fatalf("Open() result Close() error = %v", err)
+	}
+
+	startupDB := &DB{
+		options:    opts,
+		olderFiles: make(map[uint32]*data.DataFile),
+	}
+	startupDB.options.MMapAtStart = true
+	defer func() {
+		if startupDB.activeFile != nil {
+			_ = startupDB.activeFile.Close()
+		}
+		for _, df := range startupDB.olderFiles {
+			_ = df.Close()
+		}
+	}()
+
+	if err := startupDB.loadDataFiles(); err != nil {
+		t.Fatalf("loadDataFiles() error = %v", err)
+	}
+	if _, ok := startupDB.activeFile.IOManager.(*fio.MMap); !ok {
+		t.Fatalf("active IO manager = %T, want *fio.MMap", startupDB.activeFile.IOManager)
+	}
+	for fid, df := range startupDB.olderFiles {
+		if _, ok := df.IOManager.(*fio.MMap); !ok {
+			t.Fatalf("older file %d IO manager = %T, want *fio.MMap", fid, df.IOManager)
+		}
+	}
+
+	if err := startupDB.resetIoType(); err != nil {
+		t.Fatalf("resetIoType() error = %v", err)
+	}
+	if _, ok := startupDB.activeFile.IOManager.(*fio.FileIO); !ok {
+		t.Fatalf("active IO manager after reset = %T, want *fio.FileIO", startupDB.activeFile.IOManager)
+	}
+	for fid, df := range startupDB.olderFiles {
+		if _, ok := df.IOManager.(*fio.FileIO); !ok {
+			t.Fatalf("older file %d IO manager after reset = %T, want *fio.FileIO", fid, df.IOManager)
+		}
 	}
 }
 

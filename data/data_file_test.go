@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/yifaaan/bitcask/fio"
 )
 
 func TestOpenDataFile(t *testing.T) {
@@ -12,11 +13,11 @@ func TestOpenDataFile(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	t.Log(dir)
-	df1, err := OpenDataFile(dir, 1)
+	df1, err := OpenDataFile(dir, 1, fio.STANDARD_FIO)
 	assert.Nil(t, err)
 	assert.NotNil(t, df1)
 
-	df2, err := OpenDataFile(dir, 2)
+	df2, err := OpenDataFile(dir, 2, fio.STANDARD_FIO)
 	assert.Nil(t, err)
 	assert.NotNil(t, df2)
 }
@@ -26,7 +27,7 @@ func TestDataFile_Write(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	t.Log(dir)
-	df1, err := OpenDataFile(dir, 1)
+	df1, err := OpenDataFile(dir, 1, fio.STANDARD_FIO)
 	assert.Nil(t, err)
 	assert.NotNil(t, df1)
 
@@ -45,7 +46,7 @@ func TestDataFile_ReadLogRecord(t *testing.T) {
 	defer os.RemoveAll(dir)
 
 	t.Log(dir)
-	df1, err := OpenDataFile(dir, 1)
+	df1, err := OpenDataFile(dir, 1, fio.STANDARD_FIO)
 	assert.Nil(t, err)
 	assert.NotNil(t, df1)
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gofrs/flock"
 	"github.com/yifaaan/bitcask/data"
+	"github.com/yifaaan/bitcask/fio"
 	"github.com/yifaaan/bitcask/index"
 )
 
@@ -80,7 +81,31 @@ func Open(options Options) (*DB, error) {
 	if err := db.loadIndexFromDataFiles(); err != nil {
 		return nil, err
 	}
+
+	// 重置为标准文件 io 类型
+	if db.options.MMapAtStart {
+		if err := db.resetIoType(); err != nil {
+			return nil, err
+		}
+	}
 	return db, nil
+}
+
+func (db *DB) resetIoType() error {
+	if db.activeFile == nil {
+		return nil
+	}
+
+	if err := db.activeFile.SetIOManager(db.options.DirPath, fio.STANDARD_FIO); err != nil {
+		return err
+	}
+
+	for _, df := range db.olderFiles {
+		if err := df.SetIOManager(db.options.DirPath, fio.STANDARD_FIO); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func checkOptions(opts *Options) error {
@@ -114,7 +139,11 @@ func (db *DB) loadDataFiles() error {
 	slices.Sort(fids)
 	db.fids = fids
 	for i, id := range fids {
-		df, err := data.OpenDataFile(db.options.DirPath, uint32(id))
+		ioType := fio.STANDARD_FIO
+		if db.options.MMapAtStart {
+			ioType = fio.MMAP
+		}
+		df, err := data.OpenDataFile(db.options.DirPath, uint32(id), ioType)
 		if err != nil {
 			return err
 		}
@@ -330,7 +359,7 @@ func (db *DB) setActiveDataFile() error {
 		initialId = db.activeFile.FileId + 1
 	}
 
-	dataFile, err := data.OpenDataFile(db.options.DirPath, initialId)
+	dataFile, err := data.OpenDataFile(db.options.DirPath, initialId, fio.STANDARD_FIO)
 	if err != nil {
 		return err
 	}
