@@ -261,6 +261,181 @@ func TestRedisDataStructHashReopenPreservesFields(t *testing.T) {
 	assert.Equal(t, []byte("admin"), role)
 }
 
+func TestRedisDataStructSAddAndIsMember(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("tags")
+	member := []byte("go")
+
+	isNew, err := rds.SAdd(key, member)
+	require.NoError(t, err)
+	assert.True(t, isNew)
+
+	isMember, err := rds.SIsMember(key, member)
+	require.NoError(t, err)
+	assert.True(t, isMember)
+
+	rawMetadata, err := rds.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), decodeMetadata(rawMetadata).size)
+
+	dataType, err := rds.Type(key)
+	require.NoError(t, err)
+	assert.Equal(t, SET, dataType)
+}
+
+func TestRedisDataStructSAddIsIdempotent(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("tags")
+	member := []byte("go")
+
+	isNew, err := rds.SAdd(key, member)
+	require.NoError(t, err)
+	assert.True(t, isNew)
+
+	isNew, err = rds.SAdd(key, member)
+	require.NoError(t, err)
+	assert.False(t, isNew)
+
+	isMember, err := rds.SIsMember(key, member)
+	require.NoError(t, err)
+	assert.True(t, isMember)
+
+	rawMetadata, err := rds.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), decodeMetadata(rawMetadata).size)
+}
+
+func TestRedisDataStructSAddMembersAreIsolated(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	firstKey := []byte("user:1:tags")
+	secondKey := []byte("user:2:tags")
+	commonMember := []byte("go")
+	firstOnlyMember := []byte("storage")
+
+	firstNew, err := rds.SAdd(firstKey, commonMember)
+	require.NoError(t, err)
+	assert.True(t, firstNew)
+	firstNew, err = rds.SAdd(firstKey, firstOnlyMember)
+	require.NoError(t, err)
+	assert.True(t, firstNew)
+
+	secondNew, err := rds.SAdd(secondKey, commonMember)
+	require.NoError(t, err)
+	assert.True(t, secondNew)
+
+	firstCommon, err := rds.SIsMember(firstKey, commonMember)
+	require.NoError(t, err)
+	assert.True(t, firstCommon)
+	firstOnly, err := rds.SIsMember(firstKey, firstOnlyMember)
+	require.NoError(t, err)
+	assert.True(t, firstOnly)
+	secondOnly, err := rds.SIsMember(secondKey, firstOnlyMember)
+	require.NoError(t, err)
+	assert.False(t, secondOnly)
+
+	secondCommon, err := rds.SIsMember(secondKey, commonMember)
+	require.NoError(t, err)
+	assert.True(t, secondCommon)
+}
+
+func TestRedisDataStructSRem(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("tags")
+	members := [][]byte{[]byte("go"), []byte("storage"), []byte("database")}
+	for _, member := range members {
+		isNew, err := rds.SAdd(key, member)
+		require.NoError(t, err)
+		assert.True(t, isNew)
+	}
+
+	deleted, err := rds.SRem(key, members[1])
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	isMember, err := rds.SIsMember(key, members[1])
+	require.NoError(t, err)
+	assert.False(t, isMember)
+	isMember, err = rds.SIsMember(key, members[0])
+	require.NoError(t, err)
+	assert.True(t, isMember)
+
+	deleted, err = rds.SRem(key, members[1])
+	require.NoError(t, err)
+	assert.False(t, deleted)
+	deleted, err = rds.SRem(key, []byte("missing"))
+	require.NoError(t, err)
+	assert.False(t, deleted)
+
+	rawMetadata, err := rds.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), decodeMetadata(rawMetadata).size)
+
+	deleted, err = rds.SRem(key, members[0])
+	require.NoError(t, err)
+	assert.True(t, deleted)
+	deleted, err = rds.SRem(key, members[2])
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	rawMetadata, err = rds.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(0), decodeMetadata(rawMetadata).size)
+}
+
+func TestRedisDataStructSetRejectsWrongType(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("string-key")
+	require.NoError(t, rds.Set(key, 0, []byte("value")))
+
+	isNew, err := rds.SAdd(key, []byte("member"))
+	assert.False(t, isNew)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+
+	isMember, err := rds.SIsMember(key, []byte("member"))
+	assert.False(t, isMember)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+
+	deleted, err := rds.SRem(key, []byte("member"))
+	assert.False(t, deleted)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+}
+
+func TestRedisDataStructSetReopenPreservesMembers(t *testing.T) {
+	rds, options := openTestRedisDataStruct(t)
+	key := []byte("tags")
+	members := [][]byte{[]byte("go"), []byte("storage")}
+	for _, member := range members {
+		isNew, err := rds.SAdd(key, member)
+		require.NoError(t, err)
+		assert.True(t, isNew)
+	}
+	closeTestRedisDataStruct(t, rds)
+
+	reopened, err := NewRedisDatastruct(options)
+	require.NoError(t, err)
+	defer closeTestRedisDataStruct(t, reopened)
+
+	dataType, err := reopened.Type(key)
+	require.NoError(t, err)
+	assert.Equal(t, SET, dataType)
+
+	for _, member := range members {
+		isMember, err := reopened.SIsMember(key, member)
+		require.NoError(t, err)
+		assert.True(t, isMember)
+	}
+}
+
 func TestRedisDataStructDel(t *testing.T) {
 	rds, _ := openTestRedisDataStruct(t)
 	defer closeTestRedisDataStruct(t, rds)

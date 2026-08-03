@@ -37,9 +37,9 @@
 | [x] | 跨平台磁盘检查 | 当前为 Linux 和 Windows 提供可用磁盘空间实现。 |
 | [x] | HTTP API 示例 | `http/main.go` 提供写入、读取、删除、列出 key 和查看统计信息的 HTTP 路由。 |
 | [x] | Go 基准测试 | `benchmark/bench_test.go` 覆盖 Put、覆盖写、Get、WriteBatch、ListKeys 和 Fold。 |
-| [x] | Redis 字符串和 HASH 基础 API | `redis` 包提供带 TTL 的 `Set`、`Get`，以及 `HSet`、`HGet`、`HDel`、`Del` 和 `Type` 操作。 |
+| [x] | Redis 字符串、HASH 和 SET 基础 API | `redis` 包提供带 TTL 的 `Set`、`Get`，以及 `HSet`、`HGet`、`HDel`、`SAdd`、`SIsMember`、`SRem`、`Del` 和 `Type` 操作。 |
 
-项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带 HTTP 服务示例和 Redis 风格字符串、HASH 封装。暂不提供 CLI 或完整 Redis 协议兼容层。
+项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带 HTTP 服务示例和 Redis 风格字符串、HASH、SET 封装。暂不提供 CLI 或完整 Redis 协议兼容层。
 
 ## 快速开始
 
@@ -207,6 +207,12 @@ HASH 使用一条 metadata 记录保存类型、过期时间、版本和 field �
 hash key | version | field
 ```
 
+SET 使用一条 metadata 记录保存类型、过期时间、版本和 member 数量，member 使用以下内部 key 定位；成员 key 的 value 为空，仅通过 key 是否存在表示成员关系：
+
+```text
+set key | version | member | member length
+```
+
 当前 API：
 
 | API | 说明 |
@@ -217,6 +223,9 @@ hash key | version | field
 | `HSet(key, field, value)` | 设置 HASH field；新增 field 返回 `true`，更新已有 field 返回 `false`。 |
 | `HGet(key, field)` | 读取 HASH field；HASH 不存在或 size 为 0 时返回 `nil, nil`，已有其他 field 但目标 field 不存在时返回 `bitcask.ErrKeyNotFound`。 |
 | `HDel(key, field)` | 删除 HASH field；实际删除返回 `true`，field 不存在返回 `false`。 |
+| `SAdd(key, member)` | 添加 SET member；新增 member 返回 `true`，重复 member 返回 `false`。 |
+| `SIsMember(key, member)` | 判断 member 是否属于 SET；存在返回 `true`，SET 或 member 不存在返回 `false`。 |
+| `SRem(key, member)` | 删除 SET member；实际删除返回 `true`，member 不存在返回 `false`。 |
 | `Del(key)` | 删除 key；删除不存在的 key 不返回错误。 |
 | `Type(key)` | 返回 `STRING`、`HASH`、`SET`、`LIST` 或 `ZSET` 类型标记。 |
 
@@ -277,10 +286,29 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println(deleted)
+
+	setKey := []byte("user:1:tags")
+	isNew, err = rds.SAdd(setKey, []byte("go"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(isNew)
+
+	isMember, err := rds.SIsMember(setKey, []byte("go"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(isMember)
+
+	deleted, err = rds.SRem(setKey, []byte("go"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(deleted)
 }
 ```
 
-目前实现字符串 value 的 `Set` / `Get` 和 HASH 的 `HSet` / `HGet` / `HDel`，以及通用的 `Del` / `Type`。`SET`、`LIST` 和 `ZSET` 目前只是编码类型常量，尚未提供对应的数据结构操作。`Set` 收到 `nil` value 时不会创建 key；当前 `RedisDataStruct` 也尚未暴露 `Close` 和 `Sync` 方法，适合作为正在扩展中的实验性封装使用。
+目前实现字符串 value 的 `Set` / `Get`、HASH 的 `HSet` / `HGet` / `HDel`、SET 的 `SAdd` / `SIsMember` / `SRem`，以及通用的 `Del` / `Type`。`LIST` 和 `ZSET` 目前仍只是编码类型常量，尚未提供对应的数据结构操作。`Set` 收到 `nil` value 时不会创建 key；当前 `RedisDataStruct` 也尚未暴露 `Close` 和 `Sync` 方法，适合作为正在扩展中的实验性封装使用。
 
 ## HTTP API
 
@@ -503,9 +531,9 @@ CRC | record type | key size | value size | key | value
 |   |-- art.go               ART 索引
 |   `-- *_test.go            索引测试
 |-- redis/
-|   |-- types.go             Redis 风格字符串、TTL 和类型标记
+|   |-- types.go             Redis 风格字符串、TTL、HASH 和 SET 操作
 |   |-- generic.go           Del 和 Type 操作
-|   |-- meta.go              HASH metadata 编解码
+|   |-- meta.go              HASH/SET metadata 编解码
 |   `-- types_test.go        Redis 基础 API 测试
 |-- examples/
 |   `-- basic_operation.go   基础操作示例
@@ -569,6 +597,12 @@ go test ./redis -count=1
 
 ```powershell
 go test ./redis -run '^TestRedisDataStructHash|^TestRedisMetadata' -count=1
+```
+
+运行 SET 测试：
+
+```powershell
+go test ./redis -run '^TestRedisDataStructS(Add|Rem)|^TestRedisDataStructSet(RejectsWrongType|ReopenPreservesMembers)' -count=1
 ```
 
 运行静态检查：

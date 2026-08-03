@@ -236,3 +236,113 @@ func (hk *hashInternalKey) encode() []byte {
 
 	return buf
 }
+
+// ------------------- Set ---------------------
+
+func (rds *RedisDataStruct) SAdd(key, member []byte) (bool, error) {
+	// 查找元数据
+	meta, err := rds.findMetadata(key, SET)
+	if err != nil {
+		return false, err
+	}
+
+	sk := &setInternalKey{
+		key:     key,
+		version: meta.version,
+		member:  member,
+	}
+
+	var ok bool
+	if _, err := rds.db.Get(sk.encode()); err == bitcask.ErrKeyNotFound {
+		wb := rds.db.NewWriteBatch(bitcask.DefaultWriteBatchOptions)
+		meta.size++
+		_ = wb.Put(key, meta.encode())
+		_ = wb.Put(sk.encode(), nil)
+		if err := wb.Commit(); err != nil {
+			return false, err
+		}
+		ok = true
+	}
+	return ok, nil
+}
+
+func (rds *RedisDataStruct) SIsMember(key, member []byte) (bool, error) {
+	// 查找元数据
+	meta, err := rds.findMetadata(key, SET)
+	if err != nil {
+		return false, err
+	}
+	if meta.size == 0 {
+		return false, nil
+	}
+
+	sk := &setInternalKey{
+		key:     key,
+		version: meta.version,
+		member:  member,
+	}
+
+	_, err = rds.db.Get(sk.encode())
+	if err != nil && err != bitcask.ErrKeyNotFound {
+		return false, err
+	}
+	if err == bitcask.ErrKeyNotFound {
+		return false, nil
+	}
+	return true, nil
+}
+
+func (rds *RedisDataStruct) SRem(key, member []byte) (bool, error) {
+	// 查找元数据
+	meta, err := rds.findMetadata(key, SET)
+	if err != nil {
+		return false, err
+	}
+	if meta.size == 0 {
+		return false, nil
+	}
+
+	sk := &setInternalKey{
+		key:     key,
+		version: meta.version,
+		member:  member,
+	}
+
+	if _, err = rds.db.Get(sk.encode()); err == bitcask.ErrKeyNotFound {
+		return false, nil
+	}
+
+	// 更新
+	wb := rds.db.NewWriteBatch(bitcask.DefaultWriteBatchOptions)
+	meta.size--
+	_ = wb.Put(key, meta.encode())
+	_ = wb.Delete(sk.encode())
+	if err := wb.Commit(); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+type setInternalKey struct {
+	key     []byte
+	version int64
+	member  []byte
+}
+
+func (sk *setInternalKey) encode() []byte {
+	buf := make([]byte, len(sk.key)+8+len(sk.member)+4)
+
+	var idx = 0
+	copy(buf[idx:idx+len(sk.key)], sk.key)
+	idx += len(sk.key)
+
+	binary.LittleEndian.PutUint64(buf[idx:idx+8], uint64(sk.version))
+	idx += 8
+
+	copy(buf[idx:idx+len(sk.member)], sk.member)
+	idx += len(sk.member)
+
+	binary.LittleEndian.PutUint32(buf[idx:], uint32(len(sk.member)))
+
+	return buf
+}
