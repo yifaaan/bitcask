@@ -15,6 +15,7 @@
 - [Merge 与恢复](#merge-与恢复)
 - [实现概览](#实现概览)
 - [项目结构](#项目结构)
+- [基准测试](#基准测试)
 - [测试与开发](#测试与开发)
 - [更新日志](#更新日志)
 
@@ -35,6 +36,7 @@
 | [x] | 运行统计 | `DB.Stat` 提供 key 数、数据文件数、可回收大小和目录大小。 |
 | [x] | 跨平台磁盘检查 | 当前为 Linux 和 Windows 提供可用磁盘空间实现。 |
 | [x] | HTTP API 示例 | `http/main.go` 提供写入、读取、删除、列出 key 和查看统计信息的 HTTP 路由。 |
+| [x] | Go 基准测试 | `benchmark/bench_test.go` 覆盖 Put、覆盖写、Get、WriteBatch、ListKeys 和 Fold。 |
 
 项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带一个最小 HTTP 服务示例。暂不提供 CLI 或 Redis 协议兼容层。
 
@@ -266,7 +268,7 @@ if err := db.Backup("./backup", []string{"*.data"}); err != nil {
 | `DataFileSize` | `256 MiB` | 单个数据文件达到该大小后轮换。 |
 | `SyncWrite` | `false` | 是否在每次普通写入后同步数据。 |
 | `IndexType` | `index.BTREE` | 内存索引类型，也可以设置为 `index.ART`。 |
-| `BytesPerSync` | `0` | 累计写入达到该字节数后触发同步检查。 |
+| `BytesPerSync` | `0` | 累计写入达到该字节数后触发同步检查；按当前实现，`0` 会使每次写入都触发同步。 |
 | `MMapAtStart` | `true` | 启动恢复阶段是否使用 mmap 读取已有数据文件。 |
 | `DataFileMergeRatio` | `0.5` | 允许 Merge 的最低失效数据比例。 |
 
@@ -414,9 +416,43 @@ CRC | record type | key size | value size | key | value
 |   `-- basic_operation.go   基础操作示例
 |-- http/
 |   `-- main.go              HTTP API 示例服务
+|-- benchmark/
+|   `-- bench_test.go        Go benchmark 基准测试
 |-- go.mod
 `-- README.md
 ```
+
+## 基准测试
+
+基准测试位于 `benchmark/bench_test.go`，每个 benchmark 使用独立临时目录，数据库打开、预填充和关闭不会计入测量区间。覆盖的操作包括：
+
+- `BenchmarkDBPut`：在 1024 个 key 的有界 key 空间中写入 128 字节 value。
+- `BenchmarkDBPutOverwrite`：重复覆盖同一个 key。
+- `BenchmarkDBGet`：从预填充的 1024 个 key 中循环读取。
+- `BenchmarkDBWriteBatchCommit`：每次提交 100 条 WriteBatch 记录。
+- `BenchmarkDBListKeys`：遍历索引并返回全部 key。
+- `BenchmarkDBFold`：遍历全部 key 并读取对应 value。
+
+运行快速基准：
+
+```powershell
+go test ./benchmark -bench . -benchmem -benchtime=100ms
+```
+
+一次 Windows amd64、AMD Ryzen 9 9950X3D 环境下的样例结果如下，仅用于本机回归参考：
+
+| Benchmark | 耗时 | 内存分配 | 吞吐量 |
+| --- | ---: | ---: | ---: |
+| `BenchmarkDBPut` | `1.98 ms/op` | `487 B/op`，`3 allocs/op` | `0.06 MB/s` |
+| `BenchmarkDBPutOverwrite` | `1.95 ms/op` | `216 B/op`，`3 allocs/op` | `0.07 MB/s` |
+| `BenchmarkDBGet` | `6.23 us/op` | `384 B/op`，`6 allocs/op` | `20.56 MB/s` |
+| `BenchmarkDBWriteBatchCommit` | `194.74 ms/op` | `51,408 B/op`，`650 allocs/op` | `0.07 MB/s` |
+| `BenchmarkDBListKeys` | `8.54 us/op` | `36,840 B/op`，`5 allocs/op` | - |
+| `BenchmarkDBFold` | `6.95 ms/op` | `370,635 B/op`，`5,124 allocs/op` | `19.60 MB/s` |
+
+`MB/s` 由 benchmark 中的 `SetBytes` 根据逻辑 key/value 数据量计算，不是原始磁盘吞吐量。`ListKeys` 没有设置 `SetBytes`，因此不显示吞吐量。不同机器、磁盘和文件系统缓存下的结果不能直接比较，正式对比时建议使用更长的 `-benchtime`。
+
+注意：当前 `DefaultOptions.BytesPerSync` 为 `0`，结合现有写入逻辑会让每次 `Put` 和 WriteBatch 记录都触发 `Sync`。因此上面的写入结果包含强制落盘成本，`WriteBatch` 的耗时尤其会受到同步次数影响。
 
 ## 测试与开发
 
@@ -459,6 +495,7 @@ go run .\examples\basic_operation.go
 ### 2026-08-03
 
 - 增加 HTTP API 示例服务，提供写入、读取、删除、列出 key 和查看统计信息的路由。
+- 增加 `benchmark/bench_test.go`，覆盖 Put、覆盖写、Get、WriteBatch、ListKeys 和 Fold 基准测试。
 
 ### 2026-08-02
 
@@ -479,7 +516,6 @@ go run .\examples\basic_operation.go
 
 - 增加崩溃模拟、损坏记录和边界恢复测试。
 - 完善 Merge 失败恢复、临时目录清理和大数据量压力测试。
-- 增加基准测试。
 - 继续评估 CLI 以及更多 Redis 数据结构支持。
 
 ## 许可证
