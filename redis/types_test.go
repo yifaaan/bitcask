@@ -44,6 +44,22 @@ func putRawRedisValue(t *testing.T, rds *RedisDataStruct, key []byte, dataType r
 	require.NoError(t, rds.db.Put(key, encoded))
 }
 
+func TestRedisMetadataEncodeDecode(t *testing.T) {
+	want := &metadata{
+		dataType: HASH,
+		expire:   0,
+		version:  123456789,
+		size:     2,
+	}
+
+	got := decodeMetadata(want.encode())
+	require.NotNil(t, got)
+	assert.Equal(t, want.dataType, got.dataType)
+	assert.Equal(t, want.expire, got.expire)
+	assert.Equal(t, want.version, got.version)
+	assert.Equal(t, want.size, got.size)
+}
+
 func TestRedisDataStructSetAndGet(t *testing.T) {
 	rds, _ := openTestRedisDataStruct(t)
 	defer closeTestRedisDataStruct(t, rds)
@@ -107,6 +123,142 @@ func TestRedisDataStructGetRejectsWrongType(t *testing.T) {
 	got, err := rds.Get([]byte("hash"))
 	assert.Nil(t, got)
 	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+}
+
+func TestRedisDataStructHashSetAndGet(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("user:1")
+	field := []byte("name")
+
+	isNew, err := rds.HSet(key, field, []byte("Alice"))
+	require.NoError(t, err)
+	assert.True(t, isNew)
+	rawMetadata, err := rds.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), decodeMetadata(rawMetadata).size)
+
+	got, err := rds.HGet(key, field)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("Alice"), got)
+
+	dataType, err := rds.Type(key)
+	require.NoError(t, err)
+	assert.Equal(t, HASH, dataType)
+}
+
+func TestRedisDataStructHashSetUpdatesExistingField(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("user:1")
+	field := []byte("name")
+
+	isNew, err := rds.HSet(key, field, []byte("Alice"))
+	require.NoError(t, err)
+	assert.True(t, isNew)
+
+	isNew, err = rds.HSet(key, field, []byte("Bob"))
+	require.NoError(t, err)
+	assert.False(t, isNew)
+
+	got, err := rds.HGet(key, field)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("Bob"), got)
+}
+
+func TestRedisDataStructHashFieldsAreIsolated(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	firstKey := []byte("user:1")
+	secondKey := []byte("user:2")
+	field := []byte("name")
+
+	firstNew, err := rds.HSet(firstKey, field, []byte("Alice"))
+	require.NoError(t, err)
+	assert.True(t, firstNew)
+
+	secondNew, err := rds.HSet(secondKey, field, []byte("Bob"))
+	require.NoError(t, err)
+	assert.True(t, secondNew)
+
+	firstValue, err := rds.HGet(firstKey, field)
+	require.NoError(t, err)
+	secondValue, err := rds.HGet(secondKey, field)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("Alice"), firstValue)
+	assert.Equal(t, []byte("Bob"), secondValue)
+}
+
+func TestRedisDataStructHashDel(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("user:1")
+	nameField := []byte("name")
+	ageField := []byte("age")
+	_, err := rds.HSet(key, nameField, []byte("Alice"))
+	require.NoError(t, err)
+	_, err = rds.HSet(key, ageField, []byte("18"))
+	require.NoError(t, err)
+
+	deleted, err := rds.HDel(key, nameField)
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	_, err = rds.HGet(key, nameField)
+	assert.ErrorIs(t, err, bitcask.ErrKeyNotFound)
+	remainingValue, err := rds.HGet(key, ageField)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("18"), remainingValue)
+
+	deleted, err = rds.HDel(key, nameField)
+	require.NoError(t, err)
+	assert.False(t, deleted)
+
+	deleted, err = rds.HDel(key, ageField)
+	require.NoError(t, err)
+	assert.True(t, deleted)
+}
+
+func TestRedisDataStructHashRejectsWrongType(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("string-key")
+	require.NoError(t, rds.Set(key, 0, []byte("value")))
+
+	_, err := rds.HSet(key, []byte("field"), []byte("value"))
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+
+	_, err = rds.HGet(key, []byte("field"))
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+
+	_, err = rds.HDel(key, []byte("field"))
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+}
+
+func TestRedisDataStructHashReopenPreservesFields(t *testing.T) {
+	rds, options := openTestRedisDataStruct(t)
+	key := []byte("user:1")
+	_, err := rds.HSet(key, []byte("name"), []byte("Alice"))
+	require.NoError(t, err)
+	_, err = rds.HSet(key, []byte("role"), []byte("admin"))
+	require.NoError(t, err)
+	closeTestRedisDataStruct(t, rds)
+
+	reopened, err := NewRedisDatastruct(options)
+	require.NoError(t, err)
+	defer closeTestRedisDataStruct(t, reopened)
+
+	name, err := reopened.HGet(key, []byte("name"))
+	require.NoError(t, err)
+	role, err := reopened.HGet(key, []byte("role"))
+	require.NoError(t, err)
+	assert.Equal(t, []byte("Alice"), name)
+	assert.Equal(t, []byte("admin"), role)
 }
 
 func TestRedisDataStructDel(t *testing.T) {

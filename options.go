@@ -45,3 +45,8 @@ type WriteBatchOptions struct {
 	MaxBatchNum uint
 	SyncWrite   bool
 }
+
+var DefaultWriteBatchOptions = WriteBatchOptions{
+	MaxBatchNum: 50,
+	SyncWrite:   true,
+}
