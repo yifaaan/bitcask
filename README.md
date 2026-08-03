@@ -9,6 +9,7 @@
 - [特性](#特性)
 - [快速开始](#快速开始)
 - [核心 API](#核心-api)
+- [Redis 数据结构](#redis-数据结构)
 - [HTTP API](#http-api)
 - [目录备份](#目录备份)
 - [配置](#配置)
@@ -17,7 +18,6 @@
 - [项目结构](#项目结构)
 - [基准测试](#基准测试)
 - [测试与开发](#测试与开发)
-- [更新日志](#更新日志)
 
 ## 特性
 
@@ -37,8 +37,9 @@
 | [x] | 跨平台磁盘检查 | 当前为 Linux 和 Windows 提供可用磁盘空间实现。 |
 | [x] | HTTP API 示例 | `http/main.go` 提供写入、读取、删除、列出 key 和查看统计信息的 HTTP 路由。 |
 | [x] | Go 基准测试 | `benchmark/bench_test.go` 覆盖 Put、覆盖写、Get、WriteBatch、ListKeys 和 Fold。 |
+| [x] | Redis 字符串基础 API | `redis` 包提供带 TTL 的 `Set`、`Get`，以及通用 `Del` 和 `Type` 操作。 |
 
-项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带一个最小 HTTP 服务示例。暂不提供 CLI 或 Redis 协议兼容层。
+项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带 HTTP 服务示例和 Redis 风格字符串封装。暂不提供 CLI 或完整 Redis 协议兼容层。
 
 ## 快速开始
 
@@ -191,6 +192,67 @@ if stat != nil {
 - `DataFileNum`：当前打开的数据文件数量。
 - `ReclaimableSize`：覆盖或删除后可由 Merge 回收的记录大小。
 - `DisSize`：数据目录当前占用的字节数。
+
+## Redis 数据结构
+
+`redis` 包在 Bitcask 的 key-value 存储之上增加 Redis 风格的类型前缀和过期时间，内部 value 编码为：
+
+```text
+data type | expire timestamp | payload
+```
+
+当前 API：
+
+| API | 说明 |
+| --- | --- |
+| `NewRedisDatastruct(options)` | 使用 Bitcask 配置创建 Redis 数据封装。方法名沿用当前代码中的 `Datastruct` 拼写。 |
+| `Set(key, ttl, value)` | 写入字符串 value；`ttl = 0` 表示不过期，正数表示相对过期时间。 |
+| `Get(key)` | 读取字符串 value；过期 value 返回 `nil, nil`，类型不匹配返回 `ErrWrongTypeOperation`。 |
+| `Del(key)` | 删除 key；删除不存在的 key 不返回错误。 |
+| `Type(key)` | 返回 `STRING`、`HASH`、`SET`、`LIST` 或 `ZSET` 类型标记。 |
+
+使用示例：
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+	"time"
+
+	bitcask "github.com/yifaaan/bitcask"
+	"github.com/yifaaan/bitcask/redis"
+)
+
+func main() {
+	opts := bitcask.DefaultOptions
+	opts.DirPath = "./redis-data"
+
+	rds, err := redis.NewRedisDatastruct(opts)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if err := rds.Set([]byte("name"), time.Hour, []byte("bitcask")); err != nil {
+		log.Fatal(err)
+	}
+
+	value, err := rds.Get([]byte("name"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(value))
+
+	dataType, err := rds.Type([]byte("name"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(dataType == redis.STRING)
+}
+```
+
+目前只实现字符串 value 的 `Set` / `Get`，以及通用的 `Del` / `Type`。`HASH`、`SET`、`LIST` 和 `ZSET` 目前只是编码类型常量，尚未提供对应的数据结构操作。`Set` 收到 `nil` value 时不会创建 key；当前 `RedisDataStruct` 也尚未暴露 `Close` 和 `Sync` 方法，适合作为正在扩展中的实验性封装使用。
 
 ## HTTP API
 
@@ -412,6 +474,10 @@ CRC | record type | key size | value size | key | value
 |   |-- btree.go             B-tree 索引
 |   |-- art.go               ART 索引
 |   `-- *_test.go            索引测试
+|-- redis/
+|   |-- types.go             Redis 风格字符串、TTL 和类型标记
+|   |-- generic.go           Del 和 Type 操作
+|   `-- types_test.go        Redis 基础 API 测试
 |-- examples/
 |   `-- basic_operation.go   基础操作示例
 |-- http/
@@ -462,6 +528,12 @@ go test ./benchmark -bench . -benchmem -benchtime=100ms
 
 ```powershell
 go test ./... -count=1
+```
+
+运行 Redis 包测试：
+
+```powershell
+go test ./redis -count=1
 ```
 
 运行静态检查：
