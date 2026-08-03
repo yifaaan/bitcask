@@ -37,9 +37,9 @@
 | [x] | 跨平台磁盘检查 | 当前为 Linux 和 Windows 提供可用磁盘空间实现。 |
 | [x] | HTTP API 示例 | `http/main.go` 提供写入、读取、删除、列出 key 和查看统计信息的 HTTP 路由。 |
 | [x] | Go 基准测试 | `benchmark/bench_test.go` 覆盖 Put、覆盖写、Get、WriteBatch、ListKeys 和 Fold。 |
-| [x] | Redis 字符串、HASH 和 SET 基础 API | `redis` 包提供带 TTL 的 `Set`、`Get`，以及 `HSet`、`HGet`、`HDel`、`SAdd`、`SIsMember`、`SRem`、`Del` 和 `Type` 操作。 |
+| [x] | Redis 字符串、HASH、SET 和 LIST 基础 API | `redis` 包提供带 TTL 的 `Set`、`Get`，以及 `HSet`、`HGet`、`HDel`、`SAdd`、`SIsMember`、`SRem`、`LPush`、`RPush`、`LPop`、`RPop`、`Del` 和 `Type` 操作。 |
 
-项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带 HTTP 服务示例和 Redis 风格字符串、HASH、SET 封装。暂不提供 CLI 或完整 Redis 协议兼容层。
+项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带 HTTP 服务示例和 Redis 风格字符串、HASH、SET、LIST 封装。暂不提供 CLI 或完整 Redis 协议兼容层。
 
 ## 快速开始
 
@@ -213,6 +213,12 @@ SET 使用一条 metadata 记录保存类型、过期时间、版本和 member �
 set key | version | member | member length
 ```
 
+LIST 使用一条 metadata 记录保存类型、过期时间、版本、元素数量以及左右边界。元素使用以下内部 key 定位，`index` 是按左右 push 方向移动的无符号整数：
+
+```text
+list key | version | index
+```
+
 当前 API：
 
 | API | 说明 |
@@ -226,6 +232,10 @@ set key | version | member | member length
 | `SAdd(key, member)` | 添加 SET member；新增 member 返回 `true`，重复 member 返回 `false`。 |
 | `SIsMember(key, member)` | 判断 member 是否属于 SET；存在返回 `true`，SET 或 member 不存在返回 `false`。 |
 | `SRem(key, member)` | 删除 SET member；实际删除返回 `true`，member 不存在返回 `false`。 |
+| `LPush(key, element)` | 从 LIST 左侧插入 element；返回插入后的 LIST 长度。 |
+| `RPush(key, element)` | 从 LIST 右侧插入 element；返回插入后的 LIST 长度。 |
+| `LPop(key)` | 移除并返回 LIST 左侧元素；LIST 不存在或为空时返回 `nil, nil`。 |
+| `RPop(key)` | 移除并返回 LIST 右侧元素；LIST 不存在或为空时返回 `nil, nil`。 |
 | `Del(key)` | 删除 key；删除不存在的 key 不返回错误。 |
 | `Type(key)` | 返回 `STRING`、`HASH`、`SET`、`LIST` 或 `ZSET` 类型标记。 |
 
@@ -305,10 +315,29 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println(deleted)
+
+	listKey := []byte("user:1:events")
+	length, err := rds.RPush(listKey, []byte("login"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(length)
+
+	length, err = rds.LPush(listKey, []byte("open"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(length)
+
+	listValue, err := rds.LPop(listKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(listValue))
 }
 ```
 
-目前实现字符串 value 的 `Set` / `Get`、HASH 的 `HSet` / `HGet` / `HDel`、SET 的 `SAdd` / `SIsMember` / `SRem`，以及通用的 `Del` / `Type`。`LIST` 和 `ZSET` 目前仍只是编码类型常量，尚未提供对应的数据结构操作。`Set` 收到 `nil` value 时不会创建 key；当前 `RedisDataStruct` 也尚未暴露 `Close` 和 `Sync` 方法，适合作为正在扩展中的实验性封装使用。
+目前实现字符串 value 的 `Set` / `Get`、HASH 的 `HSet` / `HGet` / `HDel`、SET 的 `SAdd` / `SIsMember` / `SRem`、LIST 的 `LPush` / `RPush` / `LPop` / `RPop`，以及通用的 `Del` / `Type`。`ZSET` 目前仍只是编码类型常量，尚未提供对应的数据结构操作。`Set` 收到 `nil` value 时不会创建 key；当前 `RedisDataStruct` 也尚未暴露 `Close` 和 `Sync` 方法，适合作为正在扩展中的实验性封装使用。
 
 ## HTTP API
 
@@ -531,9 +560,9 @@ CRC | record type | key size | value size | key | value
 |   |-- art.go               ART 索引
 |   `-- *_test.go            索引测试
 |-- redis/
-|   |-- types.go             Redis 风格字符串、TTL、HASH 和 SET 操作
+|   |-- types.go             Redis 风格字符串、TTL、HASH、SET 和 LIST 操作
 |   |-- generic.go           Del 和 Type 操作
-|   |-- meta.go              HASH/SET metadata 编解码
+|   |-- meta.go              HASH/SET/LIST metadata 编解码
 |   `-- types_test.go        Redis 基础 API 测试
 |-- examples/
 |   `-- basic_operation.go   基础操作示例
@@ -603,6 +632,12 @@ go test ./redis -run '^TestRedisDataStructHash|^TestRedisMetadata' -count=1
 
 ```powershell
 go test ./redis -run '^TestRedisDataStructS(Add|Rem)|^TestRedisDataStructSet(RejectsWrongType|ReopenPreservesMembers)' -count=1
+```
+
+运行 LIST 测试：
+
+```powershell
+go test ./redis -run '^TestRedisDataStructList|^TestRedisListMetadata' -count=1
 ```
 
 运行静态检查：

@@ -60,6 +60,26 @@ func TestRedisMetadataEncodeDecode(t *testing.T) {
 	assert.Equal(t, want.size, got.size)
 }
 
+func TestRedisListMetadataEncodeDecode(t *testing.T) {
+	want := &metadata{
+		dataType: LIST,
+		expire:   0,
+		version:  123456789,
+		size:     2,
+		head:     initialListMark - 3,
+		tail:     initialListMark + 2,
+	}
+
+	got := decodeMetadata(want.encode())
+	require.NotNil(t, got)
+	assert.Equal(t, want.dataType, got.dataType)
+	assert.Equal(t, want.expire, got.expire)
+	assert.Equal(t, want.version, got.version)
+	assert.Equal(t, want.size, got.size)
+	assert.Equal(t, want.head, got.head)
+	assert.Equal(t, want.tail, got.tail)
+}
+
 func TestRedisDataStructSetAndGet(t *testing.T) {
 	rds, _ := openTestRedisDataStruct(t)
 	defer closeTestRedisDataStruct(t, rds)
@@ -434,6 +454,125 @@ func TestRedisDataStructSetReopenPreservesMembers(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, isMember)
 	}
+}
+
+func TestRedisDataStructListPushAndPop(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("queue")
+
+	length, err := rds.RPush(key, []byte("middle"))
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), length)
+
+	length, err = rds.LPush(key, []byte("first"))
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), length)
+
+	length, err = rds.RPush(key, []byte("last"))
+	require.NoError(t, err)
+	assert.Equal(t, uint32(3), length)
+
+	dataType, err := rds.Type(key)
+	require.NoError(t, err)
+	assert.Equal(t, LIST, dataType)
+
+	got, err := rds.LPop(key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("first"), got)
+
+	got, err = rds.RPop(key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("last"), got)
+
+	got, err = rds.LPop(key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("middle"), got)
+
+	got, err = rds.LPop(key)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+	got, err = rds.RPop(key)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+
+	rawMetadata, err := rds.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(0), decodeMetadata(rawMetadata).size)
+}
+
+func TestRedisDataStructListMissingKeyIsEmpty(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("missing-list")
+
+	got, err := rds.LPop(key)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+
+	got, err = rds.RPop(key)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+
+	_, err = rds.Type(key)
+	assert.ErrorIs(t, err, bitcask.ErrKeyNotFound)
+}
+
+func TestRedisDataStructListRejectsWrongType(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("string-key")
+	require.NoError(t, rds.Set(key, 0, []byte("value")))
+
+	length, err := rds.LPush(key, []byte("element"))
+	assert.Zero(t, length)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+
+	length, err = rds.RPush(key, []byte("element"))
+	assert.Zero(t, length)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+
+	got, err := rds.LPop(key)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+
+	got, err = rds.RPop(key)
+	assert.Nil(t, got)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+}
+
+func TestRedisDataStructListReopenPreservesElements(t *testing.T) {
+	rds, options := openTestRedisDataStruct(t)
+	key := []byte("queue")
+
+	_, err := rds.RPush(key, []byte("middle"))
+	require.NoError(t, err)
+	_, err = rds.LPush(key, []byte("first"))
+	require.NoError(t, err)
+	_, err = rds.RPush(key, []byte("last"))
+	require.NoError(t, err)
+	closeTestRedisDataStruct(t, rds)
+
+	reopened, err := NewRedisDatastruct(options)
+	require.NoError(t, err)
+	defer closeTestRedisDataStruct(t, reopened)
+
+	dataType, err := reopened.Type(key)
+	require.NoError(t, err)
+	assert.Equal(t, LIST, dataType)
+
+	got, err := reopened.LPop(key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("first"), got)
+	got, err = reopened.RPop(key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("last"), got)
+	got, err = reopened.LPop(key)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("middle"), got)
 }
 
 func TestRedisDataStructDel(t *testing.T) {
