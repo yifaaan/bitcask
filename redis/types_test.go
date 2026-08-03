@@ -575,6 +575,153 @@ func TestRedisDataStructListReopenPreservesElements(t *testing.T) {
 	assert.Equal(t, []byte("middle"), got)
 }
 
+func TestRedisDataStructZSetAddAndScore(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("leaderboard")
+	member := []byte("alice")
+
+	isNew, err := rds.ZAdd(key, 98.5, member)
+	require.NoError(t, err)
+	assert.True(t, isNew)
+
+	got, err := rds.ZScore(key, 98.5, member)
+	require.NoError(t, err)
+	assert.Equal(t, 98.5, got)
+
+	dataType, err := rds.Type(key)
+	require.NoError(t, err)
+	assert.Equal(t, ZSET, dataType)
+
+	rawMetadata, err := rds.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), decodeMetadata(rawMetadata).size)
+}
+
+func TestRedisDataStructZSetUpdatesScore(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("leaderboard")
+	member := []byte("alice")
+
+	isNew, err := rds.ZAdd(key, 10, member)
+	require.NoError(t, err)
+	assert.True(t, isNew)
+
+	isNew, err = rds.ZAdd(key, 10, member)
+	require.NoError(t, err)
+	assert.False(t, isNew)
+
+	isNew, err = rds.ZAdd(key, 20, member)
+	require.NoError(t, err)
+	assert.False(t, isNew)
+
+	got, err := rds.ZScore(key, 20, member)
+	require.NoError(t, err)
+	assert.Equal(t, float64(20), got)
+
+	rawMetadata, err := rds.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), decodeMetadata(rawMetadata).size)
+}
+
+func TestRedisDataStructZSetMembersAreIsolated(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	firstKey := []byte("leaderboard:1")
+	secondKey := []byte("leaderboard:2")
+	alice := []byte("alice")
+	bob := []byte("bob")
+
+	firstNew, err := rds.ZAdd(firstKey, 100, alice)
+	require.NoError(t, err)
+	assert.True(t, firstNew)
+	firstNew, err = rds.ZAdd(firstKey, 100, bob)
+	require.NoError(t, err)
+	assert.True(t, firstNew)
+	secondNew, err := rds.ZAdd(secondKey, 100, alice)
+	require.NoError(t, err)
+	assert.True(t, secondNew)
+
+	firstAlice, err := rds.ZScore(firstKey, 100, alice)
+	require.NoError(t, err)
+	assert.Equal(t, float64(100), firstAlice)
+	firstBob, err := rds.ZScore(firstKey, 100, bob)
+	require.NoError(t, err)
+	assert.Equal(t, float64(100), firstBob)
+	secondAlice, err := rds.ZScore(secondKey, 100, alice)
+	require.NoError(t, err)
+	assert.Equal(t, float64(100), secondAlice)
+}
+
+func TestRedisDataStructZSetMissingScore(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	missingScore, err := rds.ZScore([]byte("missing"), 0, []byte("alice"))
+	require.NoError(t, err)
+	assert.Equal(t, float64(-1), missingScore)
+
+	key := []byte("leaderboard")
+	_, err = rds.ZAdd(key, 10, []byte("alice"))
+	require.NoError(t, err)
+
+	missingMemberScore, err := rds.ZScore(key, 0, []byte("missing"))
+	assert.Equal(t, float64(-1), missingMemberScore)
+	assert.ErrorIs(t, err, bitcask.ErrKeyNotFound)
+}
+
+func TestRedisDataStructZSetRejectsWrongType(t *testing.T) {
+	rds, _ := openTestRedisDataStruct(t)
+	defer closeTestRedisDataStruct(t, rds)
+
+	key := []byte("string-key")
+	require.NoError(t, rds.Set(key, 0, []byte("value")))
+
+	isNew, err := rds.ZAdd(key, 10, []byte("alice"))
+	assert.False(t, isNew)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+
+	got, err := rds.ZScore(key, 0, []byte("alice"))
+	assert.Equal(t, float64(-1), got)
+	assert.ErrorIs(t, err, ErrWrongTypeOperation)
+}
+
+func TestRedisDataStructZSetReopenPreservesScores(t *testing.T) {
+	rds, options := openTestRedisDataStruct(t)
+	key := []byte("leaderboard")
+
+	_, err := rds.ZAdd(key, 10.5, []byte("alice"))
+	require.NoError(t, err)
+	_, err = rds.ZAdd(key, -2.25, []byte("bob"))
+	require.NoError(t, err)
+	_, err = rds.ZAdd(key, 12.75, []byte("alice"))
+	require.NoError(t, err)
+	closeTestRedisDataStruct(t, rds)
+
+	reopened, err := NewRedisDatastruct(options)
+	require.NoError(t, err)
+	defer closeTestRedisDataStruct(t, reopened)
+
+	dataType, err := reopened.Type(key)
+	require.NoError(t, err)
+	assert.Equal(t, ZSET, dataType)
+
+	aliceScore, err := reopened.ZScore(key, 0, []byte("alice"))
+	require.NoError(t, err)
+	assert.Equal(t, 12.75, aliceScore)
+	bobScore, err := reopened.ZScore(key, 0, []byte("bob"))
+	require.NoError(t, err)
+	assert.Equal(t, -2.25, bobScore)
+
+	rawMetadata, err := reopened.db.Get(key)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(2), decodeMetadata(rawMetadata).size)
+}
+
 func TestRedisDataStructDel(t *testing.T) {
 	rds, _ := openTestRedisDataStruct(t)
 	defer closeTestRedisDataStruct(t, rds)

@@ -37,9 +37,9 @@
 | [x] | 跨平台磁盘检查 | 当前为 Linux 和 Windows 提供可用磁盘空间实现。 |
 | [x] | HTTP API 示例 | `http/main.go` 提供写入、读取、删除、列出 key 和查看统计信息的 HTTP 路由。 |
 | [x] | Go 基准测试 | `benchmark/bench_test.go` 覆盖 Put、覆盖写、Get、WriteBatch、ListKeys 和 Fold。 |
-| [x] | Redis 字符串、HASH、SET 和 LIST 基础 API | `redis` 包提供带 TTL 的 `Set`、`Get`，以及 `HSet`、`HGet`、`HDel`、`SAdd`、`SIsMember`、`SRem`、`LPush`、`RPush`、`LPop`、`RPop`、`Del` 和 `Type` 操作。 |
+| [x] | Redis 字符串、HASH、SET、LIST 和 ZSET 基础 API | `redis` 包提供带 TTL 的 `Set`、`Get`，以及 `HSet`、`HGet`、`HDel`、`SAdd`、`SIsMember`、`SRem`、`LPush`、`RPush`、`LPop`、`RPop`、`ZAdd`、`ZScore`、`Del` 和 `Type` 操作。 |
 
-项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带 HTTP 服务示例和 Redis 风格字符串、HASH、SET、LIST 封装。暂不提供 CLI 或完整 Redis 协议兼容层。
+项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带 HTTP 服务示例和 Redis 风格字符串、HASH、SET、LIST、ZSET 封装。暂不提供 CLI 或完整 Redis 协议兼容层。
 
 ## 快速开始
 
@@ -219,6 +219,13 @@ LIST 使用一条 metadata 记录保存类型、过期时间、版本、元素�
 list key | version | index
 ```
 
+ZSET 使用一条 metadata 记录保存类型、过期时间、版本和 member 数量。每个 member 同时保存 member 到 score 的映射和用于按 score 定位的内部 key：
+
+```text
+zset key | version | member -> score
+zset key | version | score | member | member length
+```
+
 当前 API：
 
 | API | 说明 |
@@ -236,6 +243,8 @@ list key | version | index
 | `RPush(key, element)` | 从 LIST 右侧插入 element；返回插入后的 LIST 长度。 |
 | `LPop(key)` | 移除并返回 LIST 左侧元素；LIST 不存在或为空时返回 `nil, nil`。 |
 | `RPop(key)` | 移除并返回 LIST 右侧元素；LIST 不存在或为空时返回 `nil, nil`。 |
+| `ZAdd(key, score, member)` | 添加或更新 ZSET member；新增 member 返回 `true`，已有 member 返回 `false`，score 不变时不会重复写入。 |
+| `ZScore(key, score, member)` | 读取 member 对应的 score；当前签名保留 `score` 参数，实际按 member 定位。ZSET 不存在返回 `-1, nil`，member 不存在返回 `bitcask.ErrKeyNotFound`。 |
 | `Del(key)` | 删除 key；删除不存在的 key 不返回错误。 |
 | `Type(key)` | 返回 `STRING`、`HASH`、`SET`、`LIST` 或 `ZSET` 类型标记。 |
 
@@ -334,10 +343,23 @@ func main() {
 		log.Fatal(err)
 	}
 	fmt.Println(string(listValue))
+
+	zsetKey := []byte("user:1:scores")
+	isNew, err = rds.ZAdd(zsetKey, 100, []byte("Alice"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(isNew)
+
+	storedScore, err := rds.ZScore(zsetKey, 0, []byte("Alice"))
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(storedScore)
 }
 ```
 
-目前实现字符串 value 的 `Set` / `Get`、HASH 的 `HSet` / `HGet` / `HDel`、SET 的 `SAdd` / `SIsMember` / `SRem`、LIST 的 `LPush` / `RPush` / `LPop` / `RPop`，以及通用的 `Del` / `Type`。`ZSET` 目前仍只是编码类型常量，尚未提供对应的数据结构操作。`Set` 收到 `nil` value 时不会创建 key；当前 `RedisDataStruct` 也尚未暴露 `Close` 和 `Sync` 方法，适合作为正在扩展中的实验性封装使用。
+目前实现字符串 value 的 `Set` / `Get`、HASH 的 `HSet` / `HGet` / `HDel`、SET 的 `SAdd` / `SIsMember` / `SRem`、LIST 的 `LPush` / `RPush` / `LPop` / `RPop`、ZSET 的 `ZAdd` / `ZScore`，以及通用的 `Del` / `Type`。ZSET 当前未提供按 score 范围读取或删除 API。`Set` 收到 `nil` value 时不会创建 key；当前 `RedisDataStruct` 也尚未暴露 `Close` 和 `Sync` 方法，适合作为正在扩展中的实验性封装使用。
 
 ## HTTP API
 
@@ -546,6 +568,7 @@ CRC | record type | key size | value size | key | value
 |   |-- backup_test.go        备份和排除规则测试
 |   |-- file.go              目录大小统计
 |   |-- disk_linux.go        Linux 可用磁盘空间
+|   |-- float.go             float64 编解码辅助
 |   `-- disk_windows.go      Windows 可用磁盘空间
 |-- data/
 |   |-- data_file.go         数据文件和 hint 文件
@@ -560,9 +583,9 @@ CRC | record type | key size | value size | key | value
 |   |-- art.go               ART 索引
 |   `-- *_test.go            索引测试
 |-- redis/
-|   |-- types.go             Redis 风格字符串、TTL、HASH、SET 和 LIST 操作
+|   |-- types.go             Redis 风格字符串、TTL、HASH、SET、LIST 和 ZSET 操作
 |   |-- generic.go           Del 和 Type 操作
-|   |-- meta.go              HASH/SET/LIST metadata 编解码
+|   |-- meta.go              HASH/SET/LIST/ZSET metadata 编解码
 |   `-- types_test.go        Redis 基础 API 测试
 |-- examples/
 |   `-- basic_operation.go   基础操作示例
@@ -638,6 +661,12 @@ go test ./redis -run '^TestRedisDataStructS(Add|Rem)|^TestRedisDataStructSet(Rej
 
 ```powershell
 go test ./redis -run '^TestRedisDataStructList|^TestRedisListMetadata' -count=1
+```
+
+运行 ZSET 测试：
+
+```powershell
+go test ./redis -run '^TestRedisDataStructZSet' -count=1
 ```
 
 运行静态检查：

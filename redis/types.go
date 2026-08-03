@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/yifaaan/bitcask"
+	"github.com/yifaaan/bitcask/utils"
 )
 
 // RedisDataStruct redis 服务
@@ -456,4 +457,127 @@ func (rds *RedisDataStruct) popInner(key []byte, isLeft bool) ([]byte, error) {
 		return nil, err
 	}
 	return element, nil
+}
+
+// ------------------- ZSet ---------------------
+
+func (rds *RedisDataStruct) ZAdd(key []byte, score float64, member []byte) (bool, error) {
+	// 查找元数据
+	meta, err := rds.findMetadata(key, ZSET)
+	if err != nil {
+		return false, err
+	}
+
+	zk := &zsetInternalKey{
+		key:     key,
+		version: meta.version,
+		score:   score,
+		member:  member,
+	}
+
+	var exist = true
+	// 是否已存在
+	val, err := rds.db.Get(zk.encodeWithMember())
+	if err != nil && err != bitcask.ErrKeyNotFound {
+		return false, err
+	}
+	if err == bitcask.ErrKeyNotFound {
+		exist = false
+	}
+
+	if exist {
+		if score == utils.Float64FromBytes(val) {
+			return false, nil
+		}
+	}
+
+	wb := rds.db.NewWriteBatch(bitcask.DefaultWriteBatchOptions)
+	if !exist {
+		meta.size++
+		_ = wb.Put(key, meta.encode())
+	}
+	if exist {
+		oldKey := &zsetInternalKey{
+			key:     key,
+			version: meta.version,
+			member:  member,
+			score:   utils.Float64FromBytes(val),
+		}
+		_ = wb.Delete(oldKey.encodeWithScore())
+	}
+
+	_ = wb.Put(zk.encodeWithMember(), utils.Float64ToBytes(score))
+	_ = wb.Put(zk.encodeWithScore(), nil)
+	if err := wb.Commit(); err != nil {
+		return false, err
+	}
+	return !exist, nil
+}
+
+func (rds *RedisDataStruct) ZScore(key []byte, score float64, member []byte) (float64, error) {
+	// 查找元数据
+	meta, err := rds.findMetadata(key, ZSET)
+	if err != nil {
+		return -1, err
+	}
+
+	if meta.size == 0 {
+		return -1, nil
+	}
+
+	zk := &zsetInternalKey{
+		key:     key,
+		version: meta.version,
+		score:   score,
+		member:  member,
+	}
+
+	val, err := rds.db.Get(zk.encodeWithMember())
+	if err != nil {
+		return -1, err
+	}
+	return utils.Float64FromBytes(val), nil
+}
+
+type zsetInternalKey struct {
+	key     []byte
+	version int64
+	member  []byte
+	score   float64
+}
+
+func (zk *zsetInternalKey) encodeWithMember() []byte {
+	buf := make([]byte, len(zk.key)+8+len(zk.member))
+
+	var idx = 0
+	copy(buf[idx:idx+len(zk.key)], zk.key)
+	idx += len(zk.key)
+
+	binary.LittleEndian.PutUint64(buf[idx:idx+8], uint64(zk.version))
+	idx += 8
+
+	copy(buf[idx:idx+len(zk.member)], zk.member)
+
+	return buf
+}
+
+func (zk *zsetInternalKey) encodeWithScore() []byte {
+	scoreBuf := utils.Float64ToBytes(zk.score)
+	buf := make([]byte, len(zk.key)+8+len(zk.member)+len(scoreBuf)+4)
+
+	var idx = 0
+	copy(buf[idx:idx+len(zk.key)], zk.key)
+	idx += len(zk.key)
+
+	binary.LittleEndian.PutUint64(buf[idx:idx+8], uint64(zk.version))
+	idx += 8
+
+	copy(buf[idx:idx+len(scoreBuf)], scoreBuf)
+	idx += len(scoreBuf)
+
+	copy(buf[idx:idx+len(zk.member)], zk.member)
+	idx += len(zk.member)
+
+	binary.LittleEndian.PutUint32(buf[idx:idx+4], uint32(len(zk.member)))
+	return buf
 }
