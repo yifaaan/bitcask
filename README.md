@@ -490,34 +490,6 @@ go test ./utils -run '^TestBackup' -v
 go run .\examples\basic_operation.go
 ```
 
-## 更新日志
-
-### 2026-08-03
-
-- 增加 HTTP API 示例服务，提供写入、读取、删除、列出 key 和查看统计信息的路由。
-- 增加 `benchmark/bench_test.go`，覆盖 Put、覆盖写、Get、WriteBatch、ListKeys 和 Fold 基准测试。
-
-### 2026-08-02
-
-- 完善 Merge 前置检查：回收比例不足时返回 `ErrMergeRatioUnreached`，可用空间不足时返回 `ErrNoEnoughSpaceForMerge`。
-- 增加 Merge 拒绝分支、并发调用、删除 key、hint 恢复和数据完整性测试。
-- 增加 `DB.Stat`，记录 key 数、数据文件数、可回收数据大小和目录占用空间。
-- 增加 Linux/Windows 可用磁盘空间查询，并在测试中支持注入空间探针。
-- 增加 `utils.Backup`，支持递归备份数据目录和排除指定数据文件。
-- 补充 mmap 启动加载后切换标准文件 IO、文件锁和索引实现的测试覆盖。
-
-### 2026-08-01
-
-- 支持启动阶段使用 mmap 读取已有数据文件。
-- 启动恢复完成后将数据文件重置为标准文件 IO，保证后续写入流程可用。
-- 补充文件 IO、mmap、数据文件轮换和数据库恢复测试。
-
-## 后续计划
-
-- 增加崩溃模拟、损坏记录和边界恢复测试。
-- 完善 Merge 失败恢复、临时目录清理和大数据量压力测试。
-- 继续评估 CLI 以及更多 Redis 数据结构支持。
-
 ## 许可证
 
 本项目使用 MIT License 发布。
