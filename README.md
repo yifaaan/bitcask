@@ -9,7 +9,9 @@
 - [特性](#特性)
 - [快速开始](#快速开始)
 - [核心 API](#核心-api)
+- [HTTP API](#http-api)
 - [目录备份](#目录备份)
+- [配置](#配置)
 - [Merge 与恢复](#merge-与恢复)
 - [实现概览](#实现概览)
 - [项目结构](#项目结构)
@@ -32,8 +34,9 @@
 | [x] | 遍历 API | 支持 `ListKeys`、`Fold`、正逆序迭代、前缀过滤和 `Seek`。 |
 | [x] | 运行统计 | `DB.Stat` 提供 key 数、数据文件数、可回收大小和目录大小。 |
 | [x] | 跨平台磁盘检查 | 当前为 Linux 和 Windows 提供可用磁盘空间实现。 |
+| [x] | HTTP API 示例 | `http/main.go` 提供写入、读取、删除、列出 key 和查看统计信息的 HTTP 路由。 |
 
-项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，暂不提供 CLI、服务端或 Redis 协议兼容层。
+项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带一个最小 HTTP 服务示例。暂不提供 CLI 或 Redis 协议兼容层。
 
 ## 快速开始
 
@@ -186,6 +189,41 @@ if stat != nil {
 - `DataFileNum`：当前打开的数据文件数量。
 - `ReclaimableSize`：覆盖或删除后可由 Merge 回收的记录大小。
 - `DisSize`：数据目录当前占用的字节数。
+
+## HTTP API
+
+`http/main.go` 提供一个基于标准库 `net/http` 的示例服务。从仓库根目录运行：
+
+```powershell
+go run .\http
+```
+
+服务默认监听 `localhost:8080`，数据目录为当前工作目录下的 `./bitcask-db/`。路由如下：
+
+| 方法 | 路径 | 请求 | 响应 |
+| --- | --- | --- | --- |
+| `POST` | `/bitcask/put` | JSON 对象，例如 `{"name":"bitcask"}`。 | 写入对象中的所有 key-value，成功时返回空响应。 |
+| `GET` | `/bitcask/get?key=name` | 通过 `key` 查询参数指定 key。 | JSON 字符串。 |
+| `DELETE` | `/bitcask/delete?key=name` | 通过 `key` 查询参数指定 key。 | JSON 字符串 `"OK"`。 |
+| `GET` | `/bitcask/listkeys` | 无请求体。 | 当前 key 的 JSON 字符串数组。 |
+| `GET` | `/bitcask/stat` | 无请求体。 | `Stat` 结构的 JSON 对象。 |
+
+PowerShell 调用示例：
+
+```powershell
+$base = "http://localhost:8080/bitcask"
+
+Invoke-RestMethod -Method Post -Uri "$base/put" `
+    -ContentType "application/json" `
+    -Body '{"name":"bitcask","version":"1"}'
+
+Invoke-RestMethod -Method Get -Uri "$base/get?key=name"
+Invoke-RestMethod -Method Get -Uri "$base/listkeys"
+Invoke-RestMethod -Method Get -Uri "$base/stat"
+Invoke-RestMethod -Method Delete -Uri "$base/delete?key=name"
+```
+
+这是用于演示数据库 API 的最小服务，不包含认证、请求体大小限制、并发策略和完整的 HTTP 错误码映射。当前示例中，读取不存在的 key 返回空字符串，删除不存在的 key 返回 `"OK"`。
 
 ## 目录备份
 
@@ -374,6 +412,8 @@ CRC | record type | key size | value size | key | value
 |   `-- *_test.go            索引测试
 |-- examples/
 |   `-- basic_operation.go   基础操作示例
+|-- http/
+|   `-- main.go              HTTP API 示例服务
 |-- go.mod
 `-- README.md
 ```
@@ -416,6 +456,10 @@ go run .\examples\basic_operation.go
 
 ## 更新日志
 
+### 2026-08-03
+
+- 增加 HTTP API 示例服务，提供写入、读取、删除、列出 key 和查看统计信息的路由。
+
 ### 2026-08-02
 
 - 完善 Merge 前置检查：回收比例不足时返回 `ErrMergeRatioUnreached`，可用空间不足时返回 `ErrNoEnoughSpaceForMerge`。
@@ -435,8 +479,8 @@ go run .\examples\basic_operation.go
 
 - 增加崩溃模拟、损坏记录和边界恢复测试。
 - 完善 Merge 失败恢复、临时目录清理和大数据量压力测试。
-- 增加基准测试和数据备份能力。
-- 评估 CLI、HTTP API 以及更多 Redis 数据结构支持。
+- 增加基准测试。
+- 继续评估 CLI 以及更多 Redis 数据结构支持。
 
 ## 许可证
 
