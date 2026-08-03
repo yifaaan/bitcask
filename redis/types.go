@@ -22,6 +22,10 @@ func NewRedisDatastruct(options bitcask.Options) (*RedisDataStruct, error) {
 	return &RedisDataStruct{db: db}, nil
 }
 
+func (rds *RedisDataStruct) Close() error {
+	return rds.db.Close()
+}
+
 type redisDataType = byte
 
 const (
