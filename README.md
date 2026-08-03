@@ -1,8 +1,8 @@
 # Bitcask
 
-> 一个使用 Go 编写的嵌入式、追加写键值存储。
+> 一个使用 Go 编写的嵌入式追加写键值存储，并提供 Redis 风格数据结构和 RESP 命令服务。
 >
-> 数据顺序写入磁盘，内存索引只保存每个 key 的最新位置，适合学习日志结构存储、崩溃恢复和索引实现。
+> 数据顺序写入磁盘，内存索引只保存每个 key 的最新位置，覆盖数据恢复、批量写入、遍历、合并回收和 Redis 风格访问。
 
 ## 目录
 
@@ -10,6 +10,7 @@
 - [快速开始](#快速开始)
 - [核心 API](#核心-api)
 - [Redis 数据结构](#redis-数据结构)
+- [Redis 命令服务](#redis-命令服务)
 - [HTTP API](#http-api)
 - [目录备份](#目录备份)
 - [配置](#配置)
@@ -38,8 +39,9 @@
 | [x] | HTTP API 示例 | `http/main.go` 提供写入、读取、删除、列出 key 和查看统计信息的 HTTP 路由。 |
 | [x] | Go 基准测试 | `benchmark/bench_test.go` 覆盖 Put、覆盖写、Get、WriteBatch、ListKeys 和 Fold。 |
 | [x] | Redis 字符串、HASH、SET、LIST 和 ZSET 基础 API | `redis` 包提供带 TTL 的 `Set`、`Get`，以及 `HSet`、`HGet`、`HDel`、`SAdd`、`SIsMember`、`SRem`、`LPush`、`RPush`、`LPop`、`RPop`、`ZAdd`、`ZScore`、`Del` 和 `Type` 操作。 |
+| [x] | Redis RESP 命令服务 | `redis/cmd` 基于 `redcon` 提供字符串、HASH、SET、LIST、ZSET 和通用 key 命令。 |
 
-项目仍在持续开发中，当前定位是一个结构清晰、可测试的嵌入式存储实验项目，并附带 HTTP 服务示例和 Redis 风格字符串、HASH、SET、LIST、ZSET 封装。暂不提供 CLI 或完整 Redis 协议兼容层。
+当前仓库的核心存储、恢复、测试、HTTP 示例、Redis 数据结构和 RESP 命令服务均已完成。命令服务定位为轻量级演示和开发工具，不追求完整 Redis 协议兼容；未实现的 Redis 特性不会在命令表中伪装成已支持能力。
 
 ## 快速开始
 
@@ -359,7 +361,62 @@ func main() {
 }
 ```
 
-目前实现字符串 value 的 `Set` / `Get`、HASH 的 `HSet` / `HGet` / `HDel`、SET 的 `SAdd` / `SIsMember` / `SRem`、LIST 的 `LPush` / `RPush` / `LPop` / `RPop`、ZSET 的 `ZAdd` / `ZScore`，以及通用的 `Del` / `Type`。ZSET 当前未提供按 score 范围读取或删除 API。`Set` 收到 `nil` value 时不会创建 key；当前 `RedisDataStruct` 也尚未暴露 `Close` 和 `Sync` 方法，适合作为正在扩展中的实验性封装使用。
+目前实现字符串 value 的 `Set` / `Get`、HASH 的 `HSet` / `HGet` / `HDel`、SET 的 `SAdd` / `SIsMember` / `SRem`、LIST 的 `LPush` / `RPush` / `LPop` / `RPop`、ZSET 的 `ZAdd` / `ZScore`，以及通用的 `Del` / `Type`。ZSET 当前未提供按 score 范围读取或删除 API。`Set` 收到 `nil` value 时不会创建 key；`RedisDataStruct` 提供 `Close`，暂未提供 `Sync`，适合作为嵌入式存储和命令服务的实验性封装使用。
+
+## Redis 命令服务
+
+`redis/cmd` 提供一个基于 `redcon` 的 RESP 命令服务，默认监听 `127.0.0.1:6380`。从仓库根目录运行：
+
+```powershell
+go run .\redis\cmd
+```
+
+服务使用 `bitcask.DefaultOptions` 打开数据库，默认数据目录为 `os.TempDir()`。启动服务后，可以使用 `redis-cli` 或其他 RESP 客户端连接：
+
+```powershell
+redis-cli -p 6380
+```
+
+当前支持的命令如下。除 `PING`、`QUIT` 外，命令名不区分大小写；HASH、SET、LIST 和 ZSET 命令当前每次处理一个 field、member 或 element。
+
+| 类别 | 命令 | 说明 |
+| --- | --- | --- |
+| 连接 | `PING [message]` | 无参数返回 `PONG`，带一个参数时原样返回。 |
+| 连接 | `QUIT` | 返回 `OK` 并关闭当前连接。 |
+| 字符串 | `SET key value` | 写入字符串并返回 `OK`。 |
+| 字符串 | `GET key` | 读取字符串；不存在时返回空值。 |
+| 通用 | `DEL key` | 删除 key，返回 `1` 或 `0`。 |
+| 通用 | `TYPE key` | 返回 `string`、`hash`、`set`、`list` 或 `zset`。 |
+| HASH | `HSET key field value` | 设置 field，新增返回 `1`，更新返回 `0`。 |
+| HASH | `HGET key field` | 读取 field，不存在时返回空值。 |
+| HASH | `HDEL key field` | 删除 field，实际删除返回 `1`。 |
+| SET | `SADD key member` | 添加 member，新增返回 `1`。 |
+| SET | `SISMEMBER key member` | 判断 member，存在返回 `1`。 |
+| SET | `SREM key member` | 删除 member，实际删除返回 `1`。 |
+| LIST | `LPUSH key element` | 从左侧插入并返回列表长度。 |
+| LIST | `RPUSH key element` | 从右侧插入并返回列表长度。 |
+| LIST | `LPOP key` | 移除并返回左侧元素。 |
+| LIST | `RPOP key` | 移除并返回右侧元素。 |
+| ZSET | `ZADD key score member` | 添加或更新 member，新增返回 `1`。 |
+| ZSET | `ZSCORE key member` | 返回 member 的 score。 |
+
+命令处理链如下：
+
+```mermaid
+sequenceDiagram
+    participant C as RESP 客户端
+    participant S as redis/cmd
+    participant R as RedisDataStruct
+    participant B as Bitcask DB
+
+    C->>S: SET / HSET / ZADD ...
+    S->>S: 解析命令和参数
+    S->>R: 调用对应数据结构 API
+    R->>B: Put / Get / WriteBatch
+    B-->>R: 数据或错误
+    R-->>S: typed result
+    S-->>C: RESP response
+```
 
 ## HTTP API
 
@@ -506,6 +563,19 @@ Merge 的结果先写入数据目录旁的临时目录。完成标记写入后�
 
 ## 实现概览
 
+### 总体架构
+
+```mermaid
+flowchart LR
+    A[Go API] --> R[RedisDataStruct]
+    H[HTTP 示例] --> D[Bitcask DB]
+    C[RESP 命令服务] --> R
+    R --> D
+    D --> I[B-tree / ART 索引]
+    D --> F[追加写 data 文件]
+    D --> Q[恢复 / mmap / hint]
+```
+
 ### 写入与读取路径
 
 ```text
@@ -586,7 +656,11 @@ CRC | record type | key size | value size | key | value
 |   |-- types.go             Redis 风格字符串、TTL、HASH、SET、LIST 和 ZSET 操作
 |   |-- generic.go           Del 和 Type 操作
 |   |-- meta.go              HASH/SET/LIST/ZSET metadata 编解码
-|   `-- types_test.go        Redis 基础 API 测试
+|   |-- types_test.go        Redis 数据结构测试
+|   `-- cmd/
+|       |-- client.go        RESP 命令解析和执行
+|       |-- client_test.go   命令分发和返回值测试
+|       `-- server.go        Redis 命令服务入口
 |-- examples/
 |   `-- basic_operation.go   基础操作示例
 |-- http/
@@ -643,6 +717,12 @@ go test ./... -count=1
 
 ```powershell
 go test ./redis -count=1
+```
+
+运行 Redis 命令服务测试：
+
+```powershell
+go test ./redis/cmd -count=1
 ```
 
 运行 HASH 测试：
